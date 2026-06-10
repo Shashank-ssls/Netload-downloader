@@ -1,0 +1,52 @@
+# Node
+backend/node_modules/
+backend/dist/
+
+# Playwright Chromium (large binary, re-installed via setup script)
+backend/playwright-browsers/
+
+# Binaries (re-downloaded via backend/scripts/download-binaries.ps1)
+backend/ffmpeg/
+backend/yt-dlp/
+
+# Runtime data (user-specific, not source)
+backend/database/*.db
+backend/database/*.db-shm
+backend/database/*.db-wal
+backend/downloads/
+backend/logs/
+backend/temp/
+backend/cookies/
+
+# Env / secrets
+backend/.env.local
+.env.local
+*.env
+
+# Python
+venv/
+adblock-dl/__pycache__/
+adblock-dl/*.pyc
+tools/__pycache__/
+**/__pycache__/
+**/*.pyc
+**/*.pyo
+
+# OS
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# Editor
+.vscode/
+.idea/
+*.suo
+*.user
+
+# Test artifacts
+*.mp4
+*.m4a
+*.mkv
+*.webm
+*.ts
+

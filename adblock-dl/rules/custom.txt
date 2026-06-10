@@ -1,0 +1,22 @@
+# adblock-dl custom URL rules
+# ----------------------------
+# Add one regex pattern per line.
+# Lines starting with # are comments.
+# These are merged with the built-in patterns in core/detector.py
+#
+# Examples:
+#   ads\.example\.com
+#   /sponsored/
+#   preroll.*\.ts$
+
+# Hotstar / JioCinema common ad paths
+/csai/
+/dai/
+/ssai/
+googlead
+
+# Generic patterns
+/adbreak/
+/ad_segment/
+sponsor\.
+/bumper/

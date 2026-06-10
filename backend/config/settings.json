@@ -1,0 +1,7 @@
+{
+  "downloadDir": "F:/MediaDownloads",
+  "maxConcurrentDownloads": 3,
+  "cookiesPath": "./backend/cookies/cookies.txt",
+  "ffmpegPath": "F:/Dev/myproject/Main_scrapper/main_main/netload-downloader/backend/ffmpeg",
+  "ytdlpPath": "F:/Dev/myproject/Main_scrapper/main_main/netload-downloader/backend/yt-dlp/yt-dlp.exe"
+}

@@ -1,0 +1,13 @@
+node_modules/
+dist/
+logs/
+temp/
+database/downloader.db
+downloads/
+cookies/cookies.txt
+yt-dlp/yt-dlp.exe
+ffmpeg/ffmpeg.exe
+ffmpeg/ffprobe.exe
+.env.local
+.env
+venv/
