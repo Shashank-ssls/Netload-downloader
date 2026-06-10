@@ -43,10 +43,7 @@ desktop.ini
 *.suo
 *.user
 
-# Test artifacts
-*.mp4
-*.m4a
-*.mkv
-*.webm
-*.ts
+# NOTE: do NOT add `*.ts` here — it would ignore TypeScript source as well as
+# MPEG-TS video. Downloaded media lives in F:/MediaDownloads (outside the repo)
+# and backend/downloads + backend/temp are already ignored by path above.
 
