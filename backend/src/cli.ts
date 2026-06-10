@@ -3,10 +3,15 @@
  * netload — thin CLI over the running backend API.
  *
  *   netload <url> [--audio] [--format <id>] [--playlist] [--subs] [--thumb]
+ *   netload corpus [path]      measure reach across a URL corpus (analyze only)
  *
  * Requires the backend to be running (npm run dev / start). Set NETLOAD_API to
  * point at a non-default host (default http://127.0.0.1:4000).
  */
+
+import fs from 'fs';
+import path from 'path';
+import { classifyOutcome, matchesExpect, Outcome } from './corpus/classify';
 
 const API = process.env.NETLOAD_API || 'http://127.0.0.1:4000';
 
@@ -21,6 +26,7 @@ interface TaskView {
 
 function printHelp(): void {
   console.log(`netload <url> [options]
+netload corpus [path]   measure reach across a URL corpus (analyze only)
 
   --audio          audio only (mp3)
   --format <id>    specific format id (from analyze)
@@ -51,8 +57,82 @@ async function pollTask(id: string): Promise<void> {
   }
 }
 
+interface CorpusEntry {
+  name: string;
+  url: string;
+  category?: string;
+  expect?: string;
+  note?: string;
+}
+
+/** Analyze one URL and reduce it to a coarse outcome string. */
+async function analyzeOutcome(url: string): Promise<Outcome> {
+  const ctrl = new AbortController();
+  const timer = setTimeout(() => ctrl.abort(), 90_000);
+  try {
+    const resp = await fetch(`${API}/api/analyze`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ url }),
+      signal: ctrl.signal,
+    });
+    if (!resp.ok) {
+      const b = (await resp.json().catch(() => ({}))) as { error?: string };
+      return `error:${b.error || resp.status}`;
+    }
+    return classifyOutcome((await resp.json()) as Record<string, unknown>);
+  } catch (e: any) {
+    return `error:${e?.name === 'AbortError' ? 'TIMEOUT' : 'UNREACHABLE'}`;
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+async function runCorpus(args: string[]): Promise<void> {
+  // Fail fast if the backend isn't up (otherwise every entry just times out).
+  try {
+    await fetch(`${API}/api/health`);
+  } catch {
+    console.error(`error: cannot reach backend at ${API} — start it (npm run dev) first`);
+    process.exit(1);
+  }
+
+  const file = path.resolve(args[0] || 'corpus/urls.json');
+  let entries: CorpusEntry[];
+  try {
+    entries = (JSON.parse(fs.readFileSync(file, 'utf8')).entries || []) as CorpusEntry[];
+  } catch {
+    console.error(`error: cannot read corpus at ${file}`);
+    process.exit(1);
+  }
+
+  console.log(`Reach corpus — ${entries.length} entries via ${API}\n`);
+  console.log(`  RESULT  ${'NAME'.padEnd(30)}${'CATEGORY'.padEnd(12)}${'EXPECT'.padEnd(10)}ACTUAL`);
+  let pass = 0;
+  const failed: string[] = [];
+  for (const e of entries) {
+    const actual = await analyzeOutcome(e.url);
+    const ok = matchesExpect(e.expect, actual);
+    if (ok) pass++;
+    else failed.push(e.name);
+    console.log(
+      `  ${(ok ? 'PASS' : 'FAIL').padEnd(6)}  ${(e.name || '').slice(0, 28).padEnd(30)}` +
+        `${(e.category || '').padEnd(12)}${(e.expect || 'resolve').padEnd(10)}${actual}`,
+    );
+  }
+  console.log(`\n${pass}/${entries.length} passed`);
+  if (failed.length) {
+    console.log(`FAILED: ${failed.join(', ')}`);
+    process.exit(1);
+  }
+}
+
 async function main(): Promise<void> {
   const argv = process.argv.slice(2);
+  if (argv[0] === 'corpus') {
+    await runCorpus(argv.slice(1));
+    return;
+  }
   if (argv.length === 0 || argv.includes('-h') || argv.includes('--help')) {
     printHelp();
     return;
