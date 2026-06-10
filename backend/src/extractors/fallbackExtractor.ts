@@ -23,7 +23,8 @@ import { HeaderBuilder } from '../utils/headers';
 import { BrowserManager } from '../utils/browserManager';
 import { BrowserHelpers } from '../utils/browserHelpers';
 import type { CapturedStream, StreamMagnitude } from '../types';
-import type { Page } from 'playwright-core';
+import type { Page, Response as PlaywrightResponse } from 'playwright-core';
+import { classifyContentType, classifyBytes, type MediaKind } from './mediaSignature';
 
 // "Real content" floors. A stream below BOTH is treated as a preview/placeholder
 // and demoted (and flagged as a likely preview if it's still the best we have).
@@ -49,6 +50,37 @@ const STREAM_URL_PATTERNS = [
 ];
 
 const MEDIA_RESOURCE_TYPES = ['xhr', 'fetch', 'media', 'other'];
+
+// Auth/identity headers worth replaying to the CDN so segment + key fetches pass.
+const FORWARDED_HEADERS = [
+  'authorization', 'x-auth-token', 'x-access-token', 'x-requested-with',
+  'sec-fetch-mode', 'sec-fetch-site', 'sec-fetch-dest',
+];
+const DEFAULT_UA =
+  'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36';
+
+// ─── Content-based capture (catches opaque media URLs the patterns above miss) ──
+// Resource types we'll content-sniff. A streaming `<video>` fetch is usually
+// `media`; obfuscated players pull manifests/segments via `xhr`/`fetch`.
+const CONTENT_SNIFF_RESOURCE_TYPES = ['xhr', 'fetch', 'media', 'other'];
+// Only read a response body to byte-sniff when it's cheap: small or unsized
+// (manifests are tiny; a mislabelled segment is a few hundred KB). Never buffer a
+// large progressive video just to peek at its header.
+const BYTE_SNIFF_MAX_BYTES = 2 * 1024 * 1024;
+// Hard ceiling on captured candidates, so a pure segment site (no manifest, many
+// sibling chunks) can't grow the list without bound. A handful of siblings is
+// already enough for segment-run detection downstream.
+const MAX_TIER2_CANDIDATES = 60;
+
+/** Coarse score for a content-classified stream so manifests settle/rank fast. */
+function kindScore(kind: MediaKind): number {
+  switch (kind) {
+    case 'hls': return 80;
+    case 'dash': return 70;
+    case 'mp4': return 40;
+    default: return 0; // ts segment / generic — let magnitude probing rank it
+  }
+}
 
 const PLAY_BUTTON_SELECTORS = [
   '.vjs-big-play-button',
@@ -193,8 +225,10 @@ export class FallbackExtractor {
   private static async probeMagnitude(stream: CapturedStream): Promise<StreamMagnitude> {
     const url = stream.url;
     const headers = { ...stream.headers, 'User-Agent': stream.userAgent };
-    const isHls = /\.m3u8(\?|$)/i.test(url) || /\/hls\//i.test(url);
-    const isDash = /\.mpd(\?|$)/i.test(url);
+    // Honour a content-classified kind first — an opaque-token manifest carries
+    // no `.m3u8`/`.mpd` in its URL but must still be probed as a manifest.
+    const isHls = stream.mediaKind === 'hls' || /\.m3u8(\?|$)/i.test(url) || /\/hls\//i.test(url);
+    const isDash = stream.mediaKind === 'dash' || /\.mpd(\?|$)/i.test(url);
 
     try {
       if (isHls) return { durationSec: await this.probeHlsDuration(url, headers), isManifest: true };
@@ -412,46 +446,44 @@ export class FallbackExtractor {
 
         const hardCap = setTimeout(finish, HARD_CAP_MS);
 
-        page!.on('request', (request) => {
+        // Shared sink for both the URL-pattern (request) path and the
+        // content-sniff (response) path. Dedupes, bounds the list, and drives the
+        // settle timer: a manifest in hand settles fast, otherwise we keep waiting
+        // (up to the weak grace, bounded by the hard cap) for one to appear.
+        const addCandidate = (captured: CapturedStream, score: number): void => {
           if (done) return;
-
-          const reqUrl = request.url();
-          const resourceType = request.resourceType();
-          const reqHeaders = request.headers();
-
-          if (!MEDIA_RESOURCE_TYPES.includes(resourceType) &&
-              !STREAM_URL_PATTERNS.some(p => p.test(reqUrl))) {
-            return;
-          }
-
-          if (reqUrl.includes('.ts?') || reqUrl.endsWith('.ts')) return;
-          if (!STREAM_URL_PATTERNS.some(pattern => pattern.test(reqUrl))) return;
-          if (candidates.some(c => c.url === reqUrl)) return; // dedupe
-
-          const captured: CapturedStream = {
-            url: reqUrl,
-            referer: reqHeaders['referer'] || url,
-            userAgent: reqHeaders['user-agent'] || 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36',
-            headers: {
-              'Referer': reqHeaders['referer'] || url,
-              'Origin': reqHeaders['origin'] || (() => { try { return new URL(url).origin; } catch { return url; } })(),
-            },
-          };
-
-          ['authorization', 'x-auth-token', 'x-access-token', 'x-requested-with', 'sec-fetch-mode', 'sec-fetch-site', 'sec-fetch-dest'].forEach(h => {
-            if (reqHeaders[h]) captured.headers[h] = reqHeaders[h];
-          });
-
-          const score = this.scoreStream(reqUrl);
+          if (candidates.length >= MAX_TIER2_CANDIDATES) return;
+          if (candidates.some(c => c.url === captured.url)) return; // dedupe
           candidates.push(captured);
           bestScore = Math.max(bestScore, score);
-          logger.info({ reqUrl, type: resourceType, score }, 'Tier 2: Stream candidate captured');
-
-          // Manifest in hand → settle fast. Otherwise keep waiting (up to the
-          // weak grace, bounded by the hard cap) for a manifest to show up.
           if (settleTimer) clearTimeout(settleTimer);
           const wait = bestScore >= MANIFEST_SCORE ? MANIFEST_SETTLE_MS : WEAK_GRACE_MS;
           settleTimer = setTimeout(finish, wait);
+        };
+
+        // FAST PATH — capture by URL pattern (cheap, no body read). Covers the
+        // overwhelming majority of sites whose media URLs carry a tell-tale
+        // extension/path/CDN name.
+        page!.on('request', (request) => {
+          if (done) return;
+          const reqUrl = request.url();
+          const resourceType = request.resourceType();
+
+          if (!MEDIA_RESOURCE_TYPES.includes(resourceType)) return;
+          if (reqUrl.includes('.ts?') || reqUrl.endsWith('.ts')) return;
+          if (!STREAM_URL_PATTERNS.some(pattern => pattern.test(reqUrl))) return;
+
+          const captured = this.capturedFromHeaders(reqUrl, request.headers(), url);
+          logger.info({ reqUrl, type: resourceType, score: this.scoreStream(reqUrl) }, 'Tier 2: Stream candidate captured (url-pattern)');
+          addCandidate(captured, this.scoreStream(reqUrl));
+        });
+
+        // CONTENT PATH — for opaque URLs the patterns miss, classify by what the
+        // response actually IS (Content-Type / first bytes). This is what lets the
+        // extractor reach sites whose media lives behind unknown CDNs/tokens.
+        page!.on('response', (response) => {
+          if (done) return;
+          void this.captureByContent(response, url, addCandidate);
         });
       });
 
@@ -536,6 +568,78 @@ export class FallbackExtractor {
 
       await page.waitForTimeout(2500).catch(() => {});
     }
+  }
+
+  /**
+   * Build a CapturedStream from a request's headers, replaying the player's
+   * Referer/Origin/auth so the CDN authorizes the follow-up fetch. `mediaKind`
+   * is set when the stream was identified by content (not URL), so downstream
+   * magnitude probing treats an opaque-token manifest as a manifest.
+   */
+  private static capturedFromHeaders(
+    reqUrl: string,
+    reqHeaders: Record<string, string>,
+    pageUrl: string,
+    mediaKind?: MediaKind,
+  ): CapturedStream {
+    let origin = reqHeaders['origin'];
+    if (!origin) { try { origin = new URL(pageUrl).origin; } catch { origin = pageUrl; } }
+    const captured: CapturedStream = {
+      url: reqUrl,
+      referer: reqHeaders['referer'] || pageUrl,
+      userAgent: reqHeaders['user-agent'] || DEFAULT_UA,
+      headers: { 'Referer': reqHeaders['referer'] || pageUrl, 'Origin': origin },
+    };
+    FORWARDED_HEADERS.forEach(h => { if (reqHeaders[h]) captured.headers[h] = reqHeaders[h]; });
+    if (mediaKind) captured.mediaKind = mediaKind;
+    return captured;
+  }
+
+  /**
+   * Content-based capture: classify a response as media by Content-Type and, when
+   * that's ambiguous/lying, by sniffing the first bytes. URLs already caught by
+   * the URL-pattern fast path are skipped (the request handler owns those). Body
+   * sniffing is gated to small/unsized responses so we never buffer a big video.
+   */
+  private static async captureByContent(
+    response: PlaywrightResponse,
+    pageUrl: string,
+    addCandidate: (c: CapturedStream, score: number) => void,
+  ): Promise<void> {
+    try {
+      const reqUrl = response.url();
+      const request = response.request();
+      const resourceType = request.resourceType();
+      if (!CONTENT_SNIFF_RESOURCE_TYPES.includes(resourceType)) return;
+      if (reqUrl.includes('.ts?') || reqUrl.endsWith('.ts')) return;        // obvious segment
+      if (STREAM_URL_PATTERNS.some(p => p.test(reqUrl))) return;            // url-pattern path owns it
+
+      const headers = response.headers();
+      const ctKind = classifyContentType(headers['content-type']);
+      let kind: MediaKind | null = ctKind && ctKind !== 'media' ? ctKind : null;
+
+      // A specific video/manifest content-type already decided. Otherwise (no
+      // type, or generic octet-stream) try to corroborate by first bytes when
+      // that's cheap to read — a real manifest/segment has a clear signature.
+      if (!kind) {
+        const len = parseInt(headers['content-length'] || '', 10);
+        const cheap = !Number.isFinite(len) || (len > 0 && len <= BYTE_SNIFF_MAX_BYTES);
+        if (cheap) {
+          const body = await response.body().catch(() => null);
+          kind = body ? classifyBytes(body.subarray(0, 512)) : null;
+        }
+        // A *large* octet-stream we couldn't sniff is most likely a progressive
+        // media download — keep it as generic media. A small unrecognised one is
+        // probably not media (font/wasm/json blob), so drop it.
+        if (!kind && ctKind === 'media' && !cheap) kind = 'media';
+      }
+      if (!kind) return;
+
+      const captured = this.capturedFromHeaders(reqUrl, request.headers(), pageUrl, kind);
+      const score = Math.max(this.scoreStream(reqUrl), kindScore(kind));
+      logger.info({ reqUrl, type: resourceType, contentType: headers['content-type'], kind, score }, 'Tier 2: Stream candidate captured (content-sniff)');
+      addCandidate(captured, score);
+    } catch { /* response body gone / context closed */ }
   }
 
   private static buildStream(url: string, pageUrl: string, ua: string): CapturedStream {

@@ -1,5 +1,6 @@
 import { z } from 'zod';
 import path from 'path';
+import type { MediaKind } from './extractors/mediaSignature';
 
 export const TaskStatusSchema = z.enum([
   'queued',
@@ -102,6 +103,10 @@ export interface CapturedStream {
   headers: Record<string, string>;
   magnitude?: StreamMagnitude;
   isLikelyPreview?: boolean;
+  // How the stream was classified at capture time (by Content-Type / first
+  // bytes), when the URL itself carried no recognisable extension. Lets the
+  // magnitude probe treat opaque-token manifests as manifests.
+  mediaKind?: MediaKind;
 }
 
 export const DownloadRequestSchema = z.object({

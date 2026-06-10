@@ -269,7 +269,10 @@ export async function downloadMedia(taskId: string, onProgress: (data: ProgressD
           targetUrl = c.url;
           capturedHeaders = c.headers;
           capturedUA = c.userAgent;
-          isFallbackStream = isDirectStream(c.url);
+          // A content-classified stream (opaque URL, but known to be a manifest/
+          // media by Content-Type/bytes) is a raw stream just like a URL-matched
+          // one — feed it to yt-dlp as a direct fallback stream.
+          isFallbackStream = isDirectStream(c.url) || !!c.mediaKind;
           logger.info({ taskId, candIdx, fallbackUrl: targetUrl, candidateCount: candidates.length }, 'Trying fallback candidate');
           await CloudflareRecoveryManager.waitCooldown(attempt);
           continue;
