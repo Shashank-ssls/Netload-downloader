@@ -240,6 +240,11 @@ export async function downloadMedia(taskId: string, onProgress: (data: ProgressD
               }
               logger.warn({ taskId, stitched }, 'Stitched output missing/too small — falling back to candidate walk');
             } catch (e: any) {
+              if (e.message === 'DRM_PROTECTED') {
+                logger.error({ taskId }, 'Stream is DRM-protected — cannot download');
+                tasks.update(taskId, { status: 'failed', error: 'DRM_PROTECTED' });
+                throw new Error('DRM_PROTECTED');
+              }
               logger.error({ taskId, err: e.message }, 'Segment stitching failed — falling back to candidate walk');
             }
           }

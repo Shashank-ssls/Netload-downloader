@@ -171,6 +171,13 @@ export class SegmentStitcher {
       'Captured full segment list — downloading + stitching',
     );
 
+    // Bail early on DRM — these segments can't be decrypted; downloading them
+    // would just produce garbage. Surface a clear, terminal error instead.
+    if (cap.playlistText && this.detectDrm(cap.playlistText)) {
+      logger.error({ pageUrl }, 'Intercepted manifest is DRM-protected — cannot download');
+      throw new Error('DRM_PROTECTED');
+    }
+
     // Use ffmpeg's HLS engine only when the playlist actually NEEDS it — AES-128
     // decryption or fMP4 init segments, which the manual TS concat can't handle.
     // For plain MPEG-TS the manual path is faster (concurrent) and already proven,
@@ -343,6 +350,20 @@ export class SegmentStitcher {
    */
   static needsFfmpeg(playlist: string): boolean {
     return /#EXT-X-KEY:[^\r\n]*METHOD=(AES-128|SAMPLE-AES)/i.test(playlist) || /#EXT-X-MAP/i.test(playlist);
+  }
+
+  /**
+   * Detect a DRM-protected manifest (Widevine / PlayReady / FairPlay) — HLS via
+   * a DRM KEYFORMAT or an `skd://` key URI, DASH via a Widevine/PlayReady
+   * ContentProtection scheme. These can't be downloaded; we surface a clear
+   * DRM_PROTECTED error instead of producing garbage. (Plain AES-128 with an http
+   * key URI is *clear-key*, not DRM — ffmpeg decrypts it, so it's NOT flagged.)
+   */
+  static detectDrm(manifest: string): boolean {
+    if (/KEYFORMAT="(com\.apple\.streamingkeydelivery|com\.microsoft\.playready|com\.widevine|urn:uuid:edef8ba9-79d6-4ace-a3c8-27dcd51d21ed)"/i.test(manifest)) return true;
+    if (/#EXT-X-(SESSION-)?KEY:[^\r\n]*URI="skd:\/\//i.test(manifest)) return true;
+    if (/schemeIdUri="urn:uuid:(edef8ba9-79d6-4ace-a3c8-27dcd51d21ed|9a04f079-9840-4286-ab92-e65be0885f95)"/i.test(manifest)) return true;
+    return false;
   }
 
   /**

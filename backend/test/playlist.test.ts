@@ -104,6 +104,28 @@ describe('SegmentStitcher.needsFfmpeg', () => {
   });
 });
 
+describe('SegmentStitcher.detectDrm', () => {
+  it('detects HLS FairPlay (skd:// URI or streamingkeydelivery keyformat)', () => {
+    expect(SegmentStitcher.detectDrm('#EXT-X-KEY:METHOD=SAMPLE-AES,URI="skd://abc",KEYFORMAT="com.apple.streamingkeydelivery"')).toBe(true);
+    expect(SegmentStitcher.detectDrm('#EXT-X-SESSION-KEY:METHOD=SAMPLE-AES,URI="skd://x"')).toBe(true);
+  });
+
+  it('detects HLS Widevine / PlayReady keyformats', () => {
+    expect(SegmentStitcher.detectDrm('#EXT-X-KEY:METHOD=SAMPLE-AES,KEYFORMAT="com.widevine"')).toBe(true);
+    expect(SegmentStitcher.detectDrm('#EXT-X-KEY:KEYFORMAT="com.microsoft.playready"')).toBe(true);
+  });
+
+  it('detects DASH Widevine / PlayReady ContentProtection', () => {
+    expect(SegmentStitcher.detectDrm('<ContentProtection schemeIdUri="urn:uuid:edef8ba9-79d6-4ace-a3c8-27dcd51d21ed"/>')).toBe(true);
+    expect(SegmentStitcher.detectDrm('<ContentProtection schemeIdUri="urn:uuid:9a04f079-9840-4286-ab92-e65be0885f95"/>')).toBe(true);
+  });
+
+  it('does NOT flag plain AES-128 clear-key (http URI) or unencrypted TS', () => {
+    expect(SegmentStitcher.detectDrm('#EXT-X-KEY:METHOD=AES-128,URI="https://cdn/key.bin",IV=0x1')).toBe(false);
+    expect(SegmentStitcher.detectDrm('#EXTM3U\n#EXTINF:8,\nseg0.ts')).toBe(false);
+  });
+});
+
 describe('SegmentStitcher.looksLikeSegmentRun', () => {
   it('detects 4+ sibling non-manifest chunks and returns their directory prefix', () => {
     const candidates = [
