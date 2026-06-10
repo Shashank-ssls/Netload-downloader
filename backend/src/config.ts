@@ -23,6 +23,14 @@ export const config = {
   minFreeSpaceMB: parseInt(process.env.MIN_FREE_SPACE_MB || '500', 10),
   // Concurrency for segment-stitch downloads (gentle by default to avoid proxy throttling).
   segmentConcurrency: parseInt(process.env.SEGMENT_CONCURRENCY || '3', 10),
+
+  // Security / limits. apiToken empty = auth disabled (localhost-only already).
+  apiToken: process.env.API_TOKEN || '',
+  rateLimitPerMin: parseInt(process.env.RATE_LIMIT_PER_MIN || '60', 10),
+  maxRequestBodyKb: parseInt(process.env.MAX_REQUEST_BODY_KB || '256', 10),
+  // Allow analyze/download of private/loopback hosts (off by default — SSRF guard).
+  allowPrivateUrls: process.env.ALLOW_PRIVATE_URLS === 'true',
+  logPath: path.resolve(process.env.LOG_PATH || './logs'),
 };
 
 // Ensure required directories exist

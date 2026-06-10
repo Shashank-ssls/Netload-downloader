@@ -16,6 +16,8 @@ import { YTDLPProcessManager } from './yt-dlp';
 import { BrowserManager } from './utils/browserManager';
 import { PlaylistExpander } from './extractors/playlistExpander';
 import { getBinaryVersions, updateYtdlp } from './utils/binaryVersions';
+import { SsrfGuard } from './utils/ssrfGuard';
+import { apiTokenMiddleware, rateLimiter } from './middleware/security';
 
 // Validate required binaries exist before accepting any traffic
 const ffmpegExe = path.join(config.ffmpegPath, 'ffmpeg.exe');
@@ -29,6 +31,7 @@ if (!fs.existsSync(config.ytdlpPath)) {
 }
 
 const app = express();
+app.set('trust proxy', false); // bound to localhost; req.ip is the loopback peer
 const server = createServer(app);
 
 // Only accept connections from localhost
@@ -41,11 +44,18 @@ app.use(cors({
     }
   },
 }));
-app.use(express.json());
+app.use(express.json({ limit: `${config.maxRequestBodyKb}kb` }));
+app.use(apiTokenMiddleware); // no-op unless API_TOKEN is set
 
 // Health Check
 app.get('/api/health', (_req, res) => {
-  res.json({ status: 'ok', version: '1.0.0', binaries: getBinaryVersions() });
+  res.json({
+    status: 'ok',
+    version: '1.0.0',
+    binaries: getBinaryVersions(),
+    queue: QueueManager.getStats(),
+    tasks: tasks.statusCounts(),
+  });
 });
 
 // Update yt-dlp (built-in self-update)
@@ -55,7 +65,7 @@ app.post('/api/update/ytdlp', (_req, res) => {
 });
 
 // Analyze URL
-app.post('/api/analyze', async (req, res) => {
+app.post('/api/analyze', rateLimiter(config.rateLimitPerMin), async (req, res) => {
   const { url } = req.body;
   if (!url || typeof url !== 'string') {
     return res.status(400).json({ error: 'URL required' });
@@ -65,8 +75,10 @@ app.post('/api/analyze', async (req, res) => {
     if (!['http:', 'https:'].includes(parsed.protocol)) {
       return res.status(400).json({ error: 'Only HTTP/HTTPS URLs are supported' });
     }
-  } catch {
-    return res.status(400).json({ error: 'Invalid URL' });
+    SsrfGuard.assertSafe(url);
+  } catch (e: any) {
+    const msg = e?.message === 'BLOCKED_PRIVATE_URL' ? 'Private/loopback URLs are not allowed' : 'Invalid URL';
+    return res.status(400).json({ error: msg });
   }
 
   try {
@@ -79,10 +91,11 @@ app.post('/api/analyze', async (req, res) => {
 });
 
 // Create Download Task
-app.post('/api/download', async (req, res) => {
+app.post('/api/download', rateLimiter(config.rateLimitPerMin), async (req, res) => {
   try {
     const data = DownloadRequestSchema.parse(req.body);
     const { url, format, audioOnly, playlist, formatId, subtitles, embedThumbnail } = data;
+    SsrfGuard.assertSafe(url);
     const effectiveFormat = audioOnly ? 'bestaudio' : format;
 
     const optionsObj: DownloadOptions = {};
@@ -98,7 +111,10 @@ app.post('/api/download', async (req, res) => {
       const urls = await PlaylistExpander.expand(url);
       if (urls.length > 0) {
         const taskIds = [];
-        for (const u of urls) taskIds.push(await enqueue(u));
+        for (const u of urls) {
+          try { SsrfGuard.assertSafe(u); } catch { continue; } // skip private entries
+          taskIds.push(await enqueue(u));
+        }
         return res.json({ playlist: true, count: taskIds.length, taskIds });
       }
       // Not actually a playlist — fall through to a single download.

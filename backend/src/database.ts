@@ -114,6 +114,14 @@ export const tasks = {
     }))();
   },
 
+  statusCounts: (): Record<string, number> => {
+    const rows = db.prepare('SELECT status, COUNT(*) as n FROM tasks GROUP BY status').all() as {
+      status: string;
+      n: number;
+    }[];
+    return Object.fromEntries(rows.map((r) => [r.status, r.n]));
+  },
+
   resetStaleTasks: (): number => {
     const result = db.prepare(
       "UPDATE tasks SET status = 'queued', progress = 0, updatedAt = ? WHERE status IN ('downloading', 'extracting', 'processing')"

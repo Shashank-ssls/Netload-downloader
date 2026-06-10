@@ -43,4 +43,8 @@ export class QueueManager {
   static setMaxConcurrent(n: number) {
     this.maxConcurrent = Math.max(1, Math.min(20, n));
   }
+
+  static getStats() {
+    return { active: this.activeCount, maxConcurrent: this.maxConcurrent };
+  }
 }

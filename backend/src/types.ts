@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import path from 'path';
 
 export const TaskStatusSchema = z.enum([
   'queued',
@@ -115,7 +116,12 @@ export const DownloadRequestSchema = z.object({
 export type DownloadRequest = z.infer<typeof DownloadRequestSchema>;
 
 export const SettingsSchema = z.object({
-  downloadDir: z.string().min(1),
+  downloadDir: z
+    .string()
+    .min(1)
+    .refine((v) => path.isAbsolute(v) && !v.includes('..'), {
+      message: 'downloadDir must be an absolute path without ".."',
+    }),
   maxConcurrentDownloads: z.number().int().min(1).max(20).optional().default(3),
   cookiesPath: z.string().optional(),
   ffmpegPath: z.string().optional(),
