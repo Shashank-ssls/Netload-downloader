@@ -50,3 +50,7 @@ desktop.ini
 
 # Claude Code local settings
 .claude/settings.local.json
+
+# Private reach corpus — your real site list stays on this machine only.
+# (urls.example.json is the committed template.)
+backend/corpus/urls.json

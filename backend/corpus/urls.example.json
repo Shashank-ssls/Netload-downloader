@@ -1,0 +1,23 @@
+{
+  "note": "TEMPLATE. Copy this to `urls.json` (same folder) and put YOUR OWN sites there — `urls.json` is gitignored so your site list NEVER leaves this machine (not committed, not deployed, not in a clone). `npm run corpus` uses urls.json if present, else this example. ONE representative video URL per site is enough — the corpus only checks whether a SITE still works with the program, not every video. 'expect' is: ok | preview | auth | resolved | resolve (any non-error, the lenient default) | error | error:CODE.",
+  "entries": [
+    {
+      "name": "YouTube (native baseline)",
+      "url": "https://youtu.be/jNQXAC9IVRw",
+      "category": "native",
+      "expect": "ok"
+    },
+    {
+      "name": "Direct HLS (Mux test stream)",
+      "url": "https://test-streams.mux.dev/x36xhzz/x36xhzz.m3u8",
+      "category": "direct",
+      "expect": "resolve"
+    },
+    {
+      "name": "Invalid video id (negative/error path)",
+      "url": "https://www.youtube.com/watch?v=zzzzzzzzzzz",
+      "category": "negative",
+      "expect": "error"
+    }
+  ]
+}

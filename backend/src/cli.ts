@@ -99,7 +99,13 @@ async function runCorpus(args: string[]): Promise<void> {
     process.exit(1);
   }
 
-  const file = path.resolve(args[0] || 'corpus/urls.json');
+  // Prefer the user's private (gitignored) corpus/urls.json; fall back to the
+  // committed corpus/urls.example.json so a fresh clone still runs.
+  let file = args[0] ? path.resolve(args[0]) : '';
+  if (!file) {
+    const local = path.resolve('corpus/urls.json');
+    file = fs.existsSync(local) ? local : path.resolve('corpus/urls.example.json');
+  }
   let entries: CorpusEntry[];
   try {
     entries = (JSON.parse(fs.readFileSync(file, 'utf8')).entries || []) as CorpusEntry[];
@@ -107,6 +113,7 @@ async function runCorpus(args: string[]): Promise<void> {
     console.error(`error: cannot read corpus at ${file}`);
     process.exit(1);
   }
+  console.log(`(using ${path.basename(file)})`);
 
   console.log(`Reach corpus — ${entries.length} entries via ${API}\n`);
   console.log(`  RESULT  ${'NAME'.padEnd(30)}${'CATEGORY'.padEnd(12)}${'EXPECT'.padEnd(10)}ACTUAL`);
