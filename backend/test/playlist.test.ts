@@ -2,13 +2,16 @@ import { describe, it, expect } from 'vitest';
 import { SegmentStitcher } from '../src/extractors/segmentStitcher';
 import type { CapturedStream } from '../src/types';
 
-const seg = (url: string, isManifest = false): CapturedStream => ({
+const seg = (url: string, isManifest = false, bytes?: number): CapturedStream => ({
   url,
   referer: '',
   userAgent: '',
   headers: {},
-  magnitude: { isManifest },
+  magnitude: { isManifest, ...(bytes !== undefined ? { bytes } : {}) },
 });
+
+const SMALL = 1.3 * 1024 * 1024; // chunk-sized
+const LARGE = 200 * 1024 * 1024; // full progressive file
 
 describe('SegmentStitcher.dirPrefix', () => {
   it('returns origin + directory', () => {
@@ -85,6 +88,22 @@ describe('SegmentStitcher.normalizePlaylist', () => {
   });
 });
 
+describe('SegmentStitcher.needsFfmpeg', () => {
+  it('is true for AES-128 / SAMPLE-AES encrypted playlists', () => {
+    expect(SegmentStitcher.needsFfmpeg('#EXT-X-KEY:METHOD=AES-128,URI="k"\n#EXTINF:8,\na.ts')).toBe(true);
+    expect(SegmentStitcher.needsFfmpeg('#EXT-X-KEY:METHOD=SAMPLE-AES,URI="k"\n')).toBe(true);
+  });
+
+  it('is true for fMP4 (#EXT-X-MAP init segment)', () => {
+    expect(SegmentStitcher.needsFfmpeg('#EXT-X-MAP:URI="init.mp4"\n#EXTINF:8,\na.m4s')).toBe(true);
+  });
+
+  it('is false for plain MPEG-TS (no key/map, or METHOD=NONE)', () => {
+    expect(SegmentStitcher.needsFfmpeg('#EXTM3U\n#EXTINF:8,\nseg0.ts\n#EXTINF:8,\nseg1.ts')).toBe(false);
+    expect(SegmentStitcher.needsFfmpeg('#EXT-X-KEY:METHOD=NONE\n#EXTINF:8,\nseg0.ts')).toBe(false);
+  });
+});
+
 describe('SegmentStitcher.looksLikeSegmentRun', () => {
   it('detects 4+ sibling non-manifest chunks and returns their directory prefix', () => {
     const candidates = [
@@ -96,12 +115,31 @@ describe('SegmentStitcher.looksLikeSegmentRun', () => {
     expect(SegmentStitcher.looksLikeSegmentRun(candidates)).toBe('https://prox.test/stream/');
   });
 
-  it('ignores manifests and returns null below the threshold', () => {
+  it('ignores manifests and returns null below the threshold (unmeasured)', () => {
     const candidates = [
       seg('https://prox.test/stream/aaa'),
       seg('https://prox.test/stream/bbb'),
       seg('https://prox.test/master.m3u8', true),
     ];
     expect(SegmentStitcher.looksLikeSegmentRun(candidates)).toBeNull();
+  });
+
+  it('triggers on a SINGLE chunk-sized same-dir candidate (rate-limited Tier-2)', () => {
+    const candidates = [seg('https://prox.test/stream/aaa', false, SMALL)];
+    expect(SegmentStitcher.looksLikeSegmentRun(candidates)).toBe('https://prox.test/stream/');
+  });
+
+  it('does NOT trigger on a lone large (progressive) candidate', () => {
+    const candidates = [seg('https://cdn.test/videos/movie.mp4', false, LARGE)];
+    expect(SegmentStitcher.looksLikeSegmentRun(candidates)).toBeNull();
+  });
+
+  it('triggers on 3+ same-dir siblings even when unmeasured', () => {
+    const candidates = [
+      seg('https://prox.test/stream/a'),
+      seg('https://prox.test/stream/b'),
+      seg('https://prox.test/stream/c'),
+    ];
+    expect(SegmentStitcher.looksLikeSegmentRun(candidates)).toBe('https://prox.test/stream/');
   });
 });

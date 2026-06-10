@@ -33,8 +33,17 @@ import { FileValidator } from '../utils/validators';
 import type { ProgressData, CapturedStream } from '../types';
 import type { Page } from 'playwright-core';
 
-// A directory that serves at least this many sibling chunks is a segmented stream.
+// Minimum segments a *full capture* must yield to count as real content.
 const SEGMENT_RUN_MIN = 4;
+// DETECTION thresholds — how readily we ATTEMPT the authoritative playlist
+// intercept from the (often tiny) Tier-2 capture. The intercept re-opens the
+// browser and is authoritative, so a thin initial signal is enough: a few
+// same-dir siblings of any size, OR even one chunk-sized sibling.
+const SEGMENT_RUN_STRONG = 3;
+const SEGMENT_RUN_SMALL = 1;
+// A same-dir non-manifest candidate measured below this is "chunk-sized" — a
+// strong segment signal (a full progressive file would be larger).
+const SEGMENT_CHUNK_MAX_BYTES = 10 * 1024 * 1024;
 // Whole-episode capture is bounded — a runaway player can't hang a download.
 const CAPTURE_CAP_MS = 12 * 60 * 1000;
 // Give up the capture if no new segment appears for this long despite nudging.
@@ -88,26 +97,35 @@ export interface StitchResult {
 export class SegmentStitcher {
 
   /**
-   * If the captured candidates contain a run of sibling segments (same origin +
-   * directory, several of them, none a manifest), return that directory prefix
-   * (used later to filter the fresh full-capture). Otherwise null.
+   * Decide whether to attempt the authoritative playlist intercept, returning the
+   * segment directory prefix to capture (or null). We group same-directory
+   * non-manifest candidates and trigger when a group has either several siblings
+   * (any size) or even one *chunk-sized* sibling — because the intercept itself is
+   * authoritative, a thin signal from a rate-limited Tier-2 capture is enough.
+   * A lone *large* candidate (a normal progressive file) does NOT trigger, so
+   * native/progressive sites aren't mis-routed into stitching.
    */
   static looksLikeSegmentRun(candidates: CapturedStream[]): string | null {
-    const groups = new Map<string, number>();
+    const groups = new Map<string, { count: number; small: number }>();
     for (const c of candidates) {
       if (c.magnitude?.isManifest) continue;          // a real manifest isn't a segment run
       const key = this.dirPrefix(c.url);
       if (!key) continue;
-      groups.set(key, (groups.get(key) || 0) + 1);
+      const g = groups.get(key) || { count: 0, small: 0 };
+      g.count++;
+      const bytes = c.magnitude?.bytes;
+      if (bytes !== undefined && bytes < SEGMENT_CHUNK_MAX_BYTES) g.small++;
+      groups.set(key, g);
     }
 
-    let best: { prefix: string; count: number } | null = null;
-    for (const [prefix, count] of groups) {
-      if (count >= SEGMENT_RUN_MIN && (!best || count > best.count)) best = { prefix, count };
+    let best: { prefix: string; count: number; small: number } | null = null;
+    for (const [prefix, g] of groups) {
+      const triggers = g.count >= SEGMENT_RUN_STRONG || g.small >= SEGMENT_RUN_SMALL;
+      if (triggers && (!best || g.count > best.count)) best = { prefix, ...g };
     }
 
     if (best) {
-      logger.info({ prefix: best.prefix, count: best.count }, 'Detected segmented-stream run');
+      logger.info({ prefix: best.prefix, count: best.count, small: best.small }, 'Detected segmented-stream run');
       return best.prefix;
     }
     return null;
@@ -153,17 +171,18 @@ export class SegmentStitcher {
       'Captured full segment list — downloading + stitching',
     );
 
-    // PREFERRED: hand the intercepted playlist to ffmpeg's HLS engine — it does
-    // the segment download, AES-128 decryption, byte-range/fMP4, and retries far
-    // better than our hand-rolled fetcher. Fall back to manual download+concat if
-    // ffmpeg fails or no playlist text was captured (the playback-chase path).
+    // Use ffmpeg's HLS engine only when the playlist actually NEEDS it — AES-128
+    // decryption or fMP4 init segments, which the manual TS concat can't handle.
+    // For plain MPEG-TS the manual path is faster (concurrent) and already proven,
+    // so prefer it. (On ffmpeg failure we still fall back to manual, though that
+    // won't recover an encrypted stream — logged accordingly.)
     let stitched = false;
-    if (cap.playlistText) {
+    if (cap.playlistText && this.needsFfmpeg(cap.playlistText)) {
       try {
         await this.stitchViaFfmpeg(cap, outPath, onProgress);
         stitched = true;
       } catch (err: any) {
-        logger.warn({ err: err.message }, 'ffmpeg playlist stitch failed — falling back to manual segment download');
+        logger.warn({ err: err.message }, 'ffmpeg playlist stitch failed — falling back to manual (may be invalid if encrypted)');
       }
     }
     if (!stitched) {
@@ -315,6 +334,15 @@ export class SegmentStitcher {
     if (uri.startsWith('http')) return uri;
     if (uri.startsWith('//')) return 'https:' + uri;
     try { return new URL(uri, baseHint).href; } catch { return null; }
+  }
+
+  /**
+   * A playlist needs ffmpeg's HLS engine when it's AES-encrypted (`#EXT-X-KEY`
+   * METHOD=AES-128/SAMPLE-AES) or uses fMP4 init segments (`#EXT-X-MAP`) — things
+   * the manual TS concat can't do. Plain MPEG-TS goes the faster manual route.
+   */
+  static needsFfmpeg(playlist: string): boolean {
+    return /#EXT-X-KEY:[^\r\n]*METHOD=(AES-128|SAMPLE-AES)/i.test(playlist) || /#EXT-X-MAP/i.test(playlist);
   }
 
   /**
@@ -520,7 +548,9 @@ export class SegmentStitcher {
         '-headers', headerLines,
         '-user_agent', cap.userAgent,
         '-protocol_whitelist', 'http,https,tcp,tls,crypto',
-        '-allowed_extensions', 'ALL',
+        // Segment URLs are often opaque/extensionless tokens; disable ffmpeg's
+        // strict extension policing so it will fetch them.
+        '-extension_picky', '0',
         '-i', playlistUrl,
         '-c', 'copy',
       ];
