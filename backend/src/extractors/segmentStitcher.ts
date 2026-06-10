@@ -49,9 +49,9 @@ const STUCK_TICKS_BEFORE_NUDGE = 10;
 // How long to wait for the player to decrypt + emit its playlist after play().
 const PLAYLIST_WAIT_MS = 30_000;
 
-// Gentle on the segment proxy — high concurrency on a long episode trips
-// anti-abuse throttling and connections start hanging.
-const DOWNLOAD_CONCURRENCY = 3;
+// Download concurrency defaults to config.segmentConcurrency (gentle by default —
+// high concurrency on a long episode trips anti-abuse throttling and connections
+// start hanging). On a throttle failure the stitch retries once at half this.
 const SEGMENT_FETCH_TIMEOUT_MS = 25_000;
 const SEGMENT_FETCH_RETRIES = 5;
 // A few unrecoverable segments out of hundreds = a brief glitch, not a failure.
@@ -147,7 +147,20 @@ export class SegmentStitcher {
       { pageUrl, segments: cap.segments.length, durationSec: cap.durationSec, coverageSec: cap.coverageSec },
       'Captured full segment list — downloading + stitching',
     );
-    await this.stitch(cap, outPath, onProgress);
+
+    // Throttle-resilient: if too many segments fail (proxy anti-abuse), retry the
+    // whole stitch once at half concurrency before giving up.
+    try {
+      await this.stitch(cap, outPath, onProgress, config.segmentConcurrency);
+    } catch (err: any) {
+      if (/Too many segments failed/.test(err?.message || '') && config.segmentConcurrency > 1) {
+        const lower = Math.max(1, Math.floor(config.segmentConcurrency / 2));
+        logger.warn({ lower, err: err.message }, 'Stitch hit segment throttling — retrying once at lower concurrency');
+        await this.stitch(cap, outPath, onProgress, lower);
+      } else {
+        throw err;
+      }
+    }
 
     // Verify completeness against what the player said the duration was.
     const outDur = FileValidator.probeDurationSec(outPath) ?? 0;
@@ -434,6 +447,7 @@ export class SegmentStitcher {
     cap: SegmentCapture,
     outPath: string,
     onProgress: (data: ProgressData) => void,
+    concurrency: number,
   ): Promise<void> {
     const tmpDir = path.join(config.tempPath, `seg_${path.basename(outPath, path.extname(outPath))}`);
     fs.mkdirSync(tmpDir, { recursive: true });
@@ -478,7 +492,7 @@ export class SegmentStitcher {
           });
         }
       };
-      await Promise.all(Array.from({ length: Math.min(DOWNLOAD_CONCURRENCY, total) }, worker));
+      await Promise.all(Array.from({ length: Math.max(1, Math.min(concurrency, total)) }, worker));
 
       if (missing.length > total * MAX_MISSING_RATIO) {
         throw new Error(`Too many segments failed: ${missing.length}/${total} (proxy throttling?)`);

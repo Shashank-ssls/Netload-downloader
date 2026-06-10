@@ -45,6 +45,17 @@ export async function downloadMedia(taskId: string, onProgress: (data: ProgressD
   // since candidates are already ranked by size).
   let candidates: CapturedStream[] = [];
   let candIdx = -1;
+  // Set once we detect a segmented stream, so a final failure reports a precise
+  // cause instead of a generic MAX_RETRIES_EXCEEDED.
+  let segmentedDetected = false;
+
+  // Fail fast if the storage drive is nearly full (before pulling a large file).
+  const freeMB = FileValidator.getFreeSpaceMB(config.storagePath);
+  if (config.minFreeSpaceMB > 0 && freeMB >= 0 && freeMB < config.minFreeSpaceMB) {
+    logger.error({ taskId, freeMB, required: config.minFreeSpaceMB }, 'Insufficient free disk space');
+    tasks.update(taskId, { status: 'failed', error: 'DISK_FULL' });
+    throw new Error('DISK_FULL');
+  }
 
   while (attempt < maxRetries) {
     attempt++;
@@ -62,6 +73,11 @@ export async function downloadMedia(taskId: string, onProgress: (data: ProgressD
       args.push('-f', task.format);
     } else {
       args.push('-f', provider.getFormatStrategy());
+    }
+
+    // Cap individual file size when configured (0 = unlimited).
+    if (config.maxFilesizeMB > 0) {
+      args.push('--max-filesize', `${config.maxFilesizeMB}M`);
     }
 
     // Output path
@@ -152,10 +168,9 @@ export async function downloadMedia(taskId: string, onProgress: (data: ProgressD
         logger.info({ taskId, errorType }, 'Attempting CF clearance + fallback for download...');
 
         if (errorType === 'CLOUDFLARE_BLOCKED') {
-          const tokens = await CloudflareRecoveryManager.harvestClearance(targetUrl);
-          if (tokens) {
-            capturedHeaders['Cookie'] = `cf_clearance=${tokens.cfClearance}`;
-            capturedUA = tokens.userAgent;
+          const ua = await CloudflareRecoveryManager.harvestAndInject(targetUrl, capturedHeaders);
+          if (ua) {
+            capturedUA = ua;
             logger.info({ taskId }, 'CF clearance injected — retrying download');
             await CloudflareRecoveryManager.waitCooldown(attempt);
             continue;
@@ -172,6 +187,7 @@ export async function downloadMedia(taskId: string, onProgress: (data: ProgressD
           // single full-episode URL. Capture them all and stitch with ffmpeg.
           const segPrefix = SegmentStitcher.looksLikeSegmentRun(candidates);
           if (segPrefix) {
+            segmentedDetected = true;
             logger.info({ taskId, segPrefix }, 'Segmented stream detected — capturing + stitching segments');
             tasks.update(taskId, { status: 'downloading', progress: 0 });
             try {
@@ -216,6 +232,7 @@ export async function downloadMedia(taskId: string, onProgress: (data: ProgressD
     }
   }
 
-  tasks.update(taskId, { status: 'failed', error: 'MAX_RETRIES_EXCEEDED' });
-  throw new Error('MAX_RETRIES_EXCEEDED');
+  const finalError = segmentedDetected ? 'SEGMENTED_STREAM_UNRESOLVED' : 'MAX_RETRIES_EXCEEDED';
+  tasks.update(taskId, { status: 'failed', error: finalError });
+  throw new Error(finalError);
 }

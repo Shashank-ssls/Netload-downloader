@@ -64,6 +64,16 @@ export class FileValidator {
     return false;
   }
 
+  /** Free space on the filesystem holding `dir`, in MB, or -1 if it can't be read. */
+  static getFreeSpaceMB(dir: string): number {
+    try {
+      const s = fs.statfsSync(dir);
+      return Math.floor((s.bavail * s.bsize) / (1024 * 1024));
+    } catch {
+      return -1;
+    }
+  }
+
   static cleanupTemp(dir: string, maxAgeHours: number = 24) {
     if (!fs.existsSync(dir)) return;
     const now = Date.now();

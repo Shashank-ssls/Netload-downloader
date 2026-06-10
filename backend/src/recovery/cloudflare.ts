@@ -74,6 +74,19 @@ export class CloudflareRecoveryManager {
     }
   }
 
+  /**
+   * Harvest a CF clearance for `url` and inject the cookie into `headers`
+   * (mutates it). Returns the matched User-Agent on success, or null. Shared by
+   * the analyze and download recovery loops, which previously duplicated this
+   * exact block.
+   */
+  static async harvestAndInject(url: string, headers: Record<string, string>): Promise<string | null> {
+    const tokens = await this.harvestClearance(url);
+    if (!tokens) return null;
+    headers['Cookie'] = `cf_clearance=${tokens.cfClearance}`;
+    return tokens.userAgent;
+  }
+
   static buildCFArgs(tokens: CloudflareTokens): string[] {
     return [
       '--add-header', `Cookie:cf_clearance=${tokens.cfClearance}`,

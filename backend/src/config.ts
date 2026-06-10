@@ -14,6 +14,13 @@ export const config = {
   ytdlpPath: path.resolve(process.env.YTDLP_PATH || './yt-dlp/yt-dlp.exe'),
   cookiesPath: path.resolve(process.env.COOKIES_PATH || './cookies/cookies.txt'),
   nodePath: process.env.NODE_PATH || 'F:\\Apps\\NodeJS',
+
+  // Download guards. maxFilesizeMB=0 means unlimited; minFreeSpaceMB is the
+  // free-space floor on the storage drive before a download is allowed to start.
+  maxFilesizeMB: parseInt(process.env.MAX_FILESIZE_MB || '0', 10),
+  minFreeSpaceMB: parseInt(process.env.MIN_FREE_SPACE_MB || '500', 10),
+  // Concurrency for segment-stitch downloads (gentle by default to avoid proxy throttling).
+  segmentConcurrency: parseInt(process.env.SEGMENT_CONCURRENCY || '3', 10),
 };
 
 // Ensure required directories exist

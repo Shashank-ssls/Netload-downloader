@@ -111,10 +111,9 @@ export async function analyzeUrl(url: string): Promise<AnalysisResult> {
 
       if (errorType === 'CLOUDFLARE_BLOCKED' && attempt < maxRetries) {
         logger.info({ url: targetUrl }, 'Analysis hit CF block — harvesting clearance...');
-        const tokens = await CloudflareRecoveryManager.harvestClearance(targetUrl);
-        if (tokens) {
-          capturedHeaders['Cookie'] = `cf_clearance=${tokens.cfClearance}`;
-          capturedUA = tokens.userAgent;
+        const ua = await CloudflareRecoveryManager.harvestAndInject(targetUrl, capturedHeaders);
+        if (ua) {
+          capturedUA = ua;
           await CloudflareRecoveryManager.waitCooldown(attempt);
           continue;
         }

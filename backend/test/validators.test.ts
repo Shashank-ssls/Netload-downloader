@@ -55,3 +55,13 @@ describe('FileValidator.isContentSane', () => {
     expect(FileValidator.isContentSane(p, opts)).toBe(false);
   });
 });
+
+describe('FileValidator.getFreeSpaceMB', () => {
+  it('returns a non-negative number for a real directory', () => {
+    expect(FileValidator.getFreeSpaceMB(os.tmpdir())).toBeGreaterThanOrEqual(0);
+  });
+
+  it('returns -1 for an unreadable path', () => {
+    expect(FileValidator.getFreeSpaceMB(path.join(dir, 'no', 'such', 'mount'))).toBe(-1);
+  });
+});
