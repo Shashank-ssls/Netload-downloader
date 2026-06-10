@@ -5,6 +5,7 @@ import { ProgressData, Task, CapturedStream, DownloadOptions } from './types';
 import logger from './logger';
 import path from 'path';
 import { ProviderDetector } from './providers/detector';
+import { inferRecoveryHeaders } from './providers/inference';
 import { HeaderBuilder } from './utils/headers';
 import { FallbackExtractor, DURATION_FLOOR_SEC, BYTES_FLOOR } from './extractors/fallbackExtractor';
 import { SegmentStitcher } from './extractors/segmentStitcher';
@@ -200,6 +201,19 @@ export async function downloadMedia(taskId: string, onProgress: (data: ProgressD
 
       if (CloudflareRecoveryManager.isRecoverable(errorType) && attempt < maxRetries) {
         logger.info({ taskId, errorType }, 'Attempting CF clearance + fallback for download...');
+
+        // R5: behavior-inferred self-referer for UNLISTED sites (no hardcoded
+        // provider entry). Additive only — never overrides an existing header,
+        // and gated to GenericProvider so listed providers keep their tactics.
+        if (provider.name === 'generic') {
+          const inferred = inferRecoveryHeaders(errorType, targetUrl, !!capturedHeaders['Referer']);
+          if (inferred) {
+            for (const [k, v] of Object.entries(inferred)) {
+              if (!capturedHeaders[k]) capturedHeaders[k] = v;
+            }
+            logger.info({ taskId, inferred }, 'Inferred self-referer for unlisted site — retrying');
+          }
+        }
 
         if (errorType === 'CLOUDFLARE_BLOCKED') {
           const ua = await CloudflareRecoveryManager.harvestAndInject(targetUrl, capturedHeaders);
