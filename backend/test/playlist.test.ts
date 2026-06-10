@@ -56,6 +56,35 @@ describe('SegmentStitcher.parsePlaylist', () => {
   });
 });
 
+describe('SegmentStitcher.normalizePlaylist', () => {
+  const base = 'https://cdn.test/stream/';
+
+  it('rewrites relative segment URIs to absolute', () => {
+    const out = SegmentStitcher.normalizePlaylist('#EXTM3U\n#EXTINF:8,\nseg0.ts\n', base);
+    expect(out).toContain('https://cdn.test/stream/seg0.ts');
+  });
+
+  it('rewrites the #EXT-X-KEY URI (AES-128) to absolute and keeps other attrs', () => {
+    const pl = '#EXT-X-KEY:METHOD=AES-128,URI="key.bin",IV=0x123\n';
+    const out = SegmentStitcher.normalizePlaylist(pl, base);
+    expect(out).toContain('URI="https://cdn.test/stream/key.bin"');
+    expect(out).toContain('METHOD=AES-128');
+    expect(out).toContain('IV=0x123');
+  });
+
+  it('rewrites the #EXT-X-MAP init-segment URI (fMP4)', () => {
+    const out = SegmentStitcher.normalizePlaylist('#EXT-X-MAP:URI="init.mp4"\n', base);
+    expect(out).toContain('URI="https://cdn.test/stream/init.mp4"');
+  });
+
+  it('leaves absolute URIs and non-URI tags untouched', () => {
+    const pl = '#EXTM3U\n#EXT-X-TARGETDURATION:9\n#EXTINF:8,\nhttps://other.test/a.ts\n';
+    const out = SegmentStitcher.normalizePlaylist(pl, base);
+    expect(out).toContain('https://other.test/a.ts');
+    expect(out).toContain('#EXT-X-TARGETDURATION:9');
+  });
+});
+
 describe('SegmentStitcher.looksLikeSegmentRun', () => {
   it('detects 4+ sibling non-manifest chunks and returns their directory prefix', () => {
     const candidates = [

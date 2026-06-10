@@ -14,12 +14,14 @@
  *      through the entire timeline, recording every segment URL in playback
  *      order. We ride the buffered frontier and, when the player stalls, nudge
  *      just past it (never far enough to skip a segment) to force the next fetch.
- *   3. STITCH — download every segment with the player's headers and concat them
- *      with ffmpeg (`-f concat -c copy`) into a single mp4, then ffprobe the
- *      result against the player-reported duration to catch a partial capture.
+ *   3. STITCH — preferred: hand the intercepted playlist (URIs rewritten absolute)
+ *      to ffmpeg's HLS engine, which downloads + decrypts (AES-128) + remuxes with
+ *      the player's headers. Fallback: hand-rolled segment download + concat. Then
+ *      ffprobe the result against the player-reported duration to flag a partial.
  */
 
 import fs from 'fs';
+import http from 'http';
 import path from 'path';
 import { spawn } from 'child_process';
 import axios from 'axios';
@@ -73,6 +75,9 @@ interface SegmentCapture {
   userAgent: string;
   durationSec: number;   // player-reported total (0 if unknown)
   coverageSec: number;   // furthest playhead position reached
+  // The intercepted media playlist with all URIs rewritten absolute (when the
+  // playlist-intercept path was used). Lets ffmpeg do the download/decrypt.
+  playlistText?: string;
 }
 
 export interface StitchResult {
@@ -148,18 +153,21 @@ export class SegmentStitcher {
       'Captured full segment list — downloading + stitching',
     );
 
-    // Throttle-resilient: if too many segments fail (proxy anti-abuse), retry the
-    // whole stitch once at half concurrency before giving up.
-    try {
-      await this.stitch(cap, outPath, onProgress, config.segmentConcurrency);
-    } catch (err: any) {
-      if (/Too many segments failed/.test(err?.message || '') && config.segmentConcurrency > 1) {
-        const lower = Math.max(1, Math.floor(config.segmentConcurrency / 2));
-        logger.warn({ lower, err: err.message }, 'Stitch hit segment throttling — retrying once at lower concurrency');
-        await this.stitch(cap, outPath, onProgress, lower);
-      } else {
-        throw err;
+    // PREFERRED: hand the intercepted playlist to ffmpeg's HLS engine — it does
+    // the segment download, AES-128 decryption, byte-range/fMP4, and retries far
+    // better than our hand-rolled fetcher. Fall back to manual download+concat if
+    // ffmpeg fails or no playlist text was captured (the playback-chase path).
+    let stitched = false;
+    if (cap.playlistText) {
+      try {
+        await this.stitchViaFfmpeg(cap, outPath, onProgress);
+        stitched = true;
+      } catch (err: any) {
+        logger.warn({ err: err.message }, 'ffmpeg playlist stitch failed — falling back to manual segment download');
       }
+    }
+    if (!stitched) {
+      await this.stitchManualWithRetry(cap, outPath, onProgress);
     }
 
     // Verify completeness against what the player said the duration was.
@@ -247,12 +255,14 @@ export class SegmentStitcher {
 
       // Poll for a captured playlist that yields enough segments.
       const deadline = Date.now() + PLAYLIST_WAIT_MS;
-      let best: { segments: string[]; durationSec: number } | null = null;
+      let best: { segments: string[]; durationSec: number; text: string } | null = null;
       while (Date.now() < deadline) {
         const caps: string[] = await page.evaluate(() => (window as any).__caps || []).catch(() => []);
         for (const text of caps) {
           const parsed = this.parsePlaylist(text, prefix);
-          if (parsed && (!best || parsed.segments.length > best.segments.length)) best = parsed;
+          if (parsed && (!best || parsed.segments.length > best.segments.length)) {
+            best = { ...parsed, text };
+          }
         }
         if (best && best.segments.length >= SEGMENT_RUN_MIN) break;
         await page.waitForTimeout(1000).catch(() => {});
@@ -260,7 +270,14 @@ export class SegmentStitcher {
 
       if (!best || best.segments.length < SEGMENT_RUN_MIN) return null;
       logger.info({ segments: best.segments.length, durationSec: Math.round(best.durationSec) }, 'Intercepted decrypted playlist');
-      return { segments: best.segments, headers, userAgent, durationSec: best.durationSec, coverageSec: best.durationSec };
+      return {
+        segments: best.segments,
+        headers,
+        userAgent,
+        durationSec: best.durationSec,
+        coverageSec: best.durationSec,
+        playlistText: this.normalizePlaylist(best.text, prefix),
+      };
 
     } catch (err: any) {
       logger.warn({ pageUrl, err: err.message }, 'Playlist interception failed');
@@ -298,6 +315,29 @@ export class SegmentStitcher {
     if (uri.startsWith('http')) return uri;
     if (uri.startsWith('//')) return 'https:' + uri;
     try { return new URL(uri, baseHint).href; } catch { return null; }
+  }
+
+  /**
+   * Rewrite every relative URI in a media playlist to absolute so ffmpeg can read
+   * it from a local temp file: segment lines, plus the `URI="..."` attribute on
+   * `#EXT-X-KEY` (AES key) and `#EXT-X-MAP` (fMP4 init segment). Everything else
+   * (durations, byteranges, IVs) is preserved verbatim.
+   */
+  static normalizePlaylist(text: string, baseHint: string): string {
+    return text
+      .split(/\r?\n/)
+      .map((raw) => {
+        const line = raw.trim();
+        if (!line) return raw;
+        if (line.startsWith('#')) {
+          if (/URI="/.test(line)) {
+            return line.replace(/URI="([^"]+)"/g, (_m, uri) => `URI="${this.resolveSegUrl(uri, baseHint) || uri}"`);
+          }
+          return raw;
+        }
+        return this.resolveSegUrl(line, baseHint) || raw;
+      })
+      .join('\n');
   }
 
   // ─── FALLBACK CAPTURE: chase the buffer through the whole timeline ───────────
@@ -441,7 +481,113 @@ export class SegmentStitcher {
     return null;
   }
 
-  // ─── STITCH: download every segment, then ffmpeg concat ──────────────────────
+  // ─── FFMPEG PLAYLIST PATH (preferred): let ffmpeg fetch + decrypt the HLS ─────
+
+  /**
+   * Serve the (absolute-rewritten) intercepted media playlist from an ephemeral
+   * 127.0.0.1 HTTP server and point ffmpeg at it. ffmpeg's hls demuxer then does
+   * the segment download, AES-128 decryption, and byte-range/fMP4 handling — and
+   * the captured headers (Referer/Origin/UA) propagate to the segment + key
+   * requests so the CDN authorizes. (ffmpeg rejects `-headers`/`-user_agent` for a
+   * *local file* input, hence the tiny http server rather than a temp `.m3u8`.)
+   */
+  private static async stitchViaFfmpeg(
+    cap: SegmentCapture,
+    outPath: string,
+    onProgress: (data: ProgressData) => void,
+  ): Promise<void> {
+    const playlist = cap.playlistText || '';
+    const isFmp4 = /#EXT-X-MAP/i.test(playlist);
+
+    const server = http.createServer((_req, res) => {
+      res.writeHead(200, { 'Content-Type': 'application/vnd.apple.mpegurl' });
+      res.end(playlist);
+    });
+    await new Promise<void>((resolve, reject) => {
+      server.once('error', reject);
+      server.listen(0, '127.0.0.1', () => resolve());
+    });
+    const addr = server.address();
+    const port = addr && typeof addr === 'object' ? addr.port : 0;
+    const playlistUrl = `http://127.0.0.1:${port}/playlist.m3u8`;
+
+    try {
+      const ffmpeg = path.join(config.ffmpegPath, 'ffmpeg.exe');
+      const headerLines = Object.entries(cap.headers).map(([k, v]) => `${k}: ${v}`).join('\r\n') + '\r\n';
+
+      const args = [
+        '-y',
+        '-headers', headerLines,
+        '-user_agent', cap.userAgent,
+        '-protocol_whitelist', 'http,https,tcp,tls,crypto',
+        '-allowed_extensions', 'ALL',
+        '-i', playlistUrl,
+        '-c', 'copy',
+      ];
+      // ADTS→ASC only applies to MPEG-TS audio; fMP4 audio is already ASC-framed.
+      if (!isFmp4) args.push('-bsf:a', 'aac_adtstoasc');
+      args.push(outPath);
+
+      logger.info({ outPath, isFmp4, port }, 'Stitching via ffmpeg HLS engine');
+      await this.runFfmpeg(ffmpeg, args, cap.durationSec, onProgress);
+      onProgress({ progress: 100, size: '—', speed: '—', eta: '0s' });
+      logger.info({ outPath }, 'ffmpeg playlist stitch complete');
+    } finally {
+      server.close();
+    }
+  }
+
+  /** Spawn ffmpeg, parsing `time=` from stderr into download progress (0–99%). */
+  private static runFfmpeg(
+    ffmpeg: string,
+    args: string[],
+    durationSec: number,
+    onProgress: (data: ProgressData) => void,
+  ): Promise<void> {
+    return new Promise((resolve, reject) => {
+      const child = spawn(ffmpeg, args);
+      let tail = '';
+      child.stderr.on('data', (d) => {
+        tail = (tail + d.toString()).slice(-4000);
+        const m = tail.match(/time=(\d+):(\d+):(\d+(?:\.\d+)?)/g);
+        if (m && durationSec > 0) {
+          const last = m[m.length - 1].match(/time=(\d+):(\d+):(\d+(?:\.\d+)?)/);
+          if (last) {
+            const sec = +last[1] * 3600 + +last[2] * 60 + parseFloat(last[3]);
+            const pct = Math.min(99, Math.round((sec / durationSec) * 100));
+            onProgress({ progress: pct, size: '—', speed: '—', eta: '—' });
+          }
+        }
+      });
+      child.on('error', reject);
+      child.on('close', (code) => {
+        if (code === 0) resolve();
+        else reject(new Error(`ffmpeg HLS exited ${code}: ${tail.slice(-500)}`));
+      });
+    });
+  }
+
+  // ─── MANUAL STITCH (fallback): download every segment, then ffmpeg concat ────
+
+  /** Manual segment download + concat, retrying once at half concurrency if the
+   *  proxy throttles too many segments. */
+  private static async stitchManualWithRetry(
+    cap: SegmentCapture,
+    outPath: string,
+    onProgress: (data: ProgressData) => void,
+  ): Promise<void> {
+    try {
+      await this.stitch(cap, outPath, onProgress, config.segmentConcurrency);
+    } catch (err: any) {
+      if (/Too many segments failed/.test(err?.message || '') && config.segmentConcurrency > 1) {
+        const lower = Math.max(1, Math.floor(config.segmentConcurrency / 2));
+        logger.warn({ lower, err: err.message }, 'Stitch hit segment throttling — retrying once at lower concurrency');
+        await this.stitch(cap, outPath, onProgress, lower);
+      } else {
+        throw err;
+      }
+    }
+  }
 
   private static async stitch(
     cap: SegmentCapture,
