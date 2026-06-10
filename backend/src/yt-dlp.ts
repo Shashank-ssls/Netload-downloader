@@ -11,6 +11,8 @@ export interface YTDLPOptions {
   onPathDiscovered?: (path: string) => void;
   onMetadata?: (data: MetadataInfo) => void;
   captureStdout?: boolean;
+  /** Cookies file for this call (per-site). Falls back to the global cookiesPath. */
+  cookiesPath?: string;
 }
 
 function isAbsolutePath(line: string): boolean {
@@ -35,8 +37,9 @@ export class YTDLPProcessManager {
         '--continue',
       ];
 
-      if (fs.existsSync(config.cookiesPath)) {
-        baseArgs.push('--cookies', config.cookiesPath);
+      const cookiesPath = options.cookiesPath || config.cookiesPath;
+      if (cookiesPath && fs.existsSync(cookiesPath)) {
+        baseArgs.push('--cookies', cookiesPath);
       }
 
       baseArgs.push('--ffmpeg-location', config.ffmpegPath);

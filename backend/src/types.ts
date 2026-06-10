@@ -28,8 +28,16 @@ export interface Task {
   path?: string;
   error?: string;
   note?: string;
+  options?: string; // JSON-encoded DownloadOptions
   createdAt: number;
   updatedAt: number;
+}
+
+/** Per-download options persisted on the task and applied as yt-dlp args. */
+export interface DownloadOptions {
+  formatId?: string;
+  subtitles?: boolean;
+  embedThumbnail?: boolean;
 }
 
 export interface ProgressData {
@@ -98,6 +106,10 @@ export const DownloadRequestSchema = z.object({
   url: z.string().url(),
   format: z.string().optional(),
   audioOnly: z.boolean().optional().default(false),
+  playlist: z.boolean().optional().default(false),
+  formatId: z.string().optional(),
+  subtitles: z.boolean().optional().default(false),
+  embedThumbnail: z.boolean().optional().default(false),
 });
 
 export type DownloadRequest = z.infer<typeof DownloadRequestSchema>;

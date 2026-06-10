@@ -7,13 +7,14 @@ export class QueueManager {
   private static maxConcurrent = 3;
   private static activeCount = 0;
 
-  static async add(url: string, options: { title: string; format?: string }) {
+  static async add(url: string, options: { title: string; format?: string; options?: string }) {
     const id = randomUUID();
     tasks.create({
       id,
       url,
       title: options.title,
       format: options.format,
+      options: options.options,
       status: 'queued',
     });
     this.process();

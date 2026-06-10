@@ -10,6 +10,7 @@ import { CloudflareRecoveryManager } from './recovery/cloudflare';
 import { UARotator } from './utils/userAgents';
 import { FallbackExtractor, DURATION_FLOOR_SEC } from './extractors/fallbackExtractor';
 import { CookieValidator } from './utils/validators';
+import { CookieResolver } from './utils/cookieResolver';
 
 export async function analyzeUrl(url: string): Promise<AnalysisResult> {
   const timeoutMs = 35000;
@@ -48,6 +49,7 @@ export async function analyzeUrl(url: string): Promise<AnalysisResult> {
       const analysisPromise = YTDLPProcessManager.spawn(spawnId, {
         args,
         captureStdout: true,
+        cookiesPath: CookieResolver.resolve(url) || undefined,
         onStderr: (data) => { stderrOutput += data; },
       });
 

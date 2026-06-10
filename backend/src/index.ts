@@ -10,10 +10,12 @@ import { initWebSocket, setupTaskBroadcasts } from './progress';
 import { tasks, closeDatabase } from './database';
 import { analyzeUrl } from './analyzer';
 import { QueueManager } from './queue';
-import { DownloadRequestSchema, TaskStatusSchema, SettingsSchema } from './types';
+import { DownloadRequestSchema, TaskStatusSchema, SettingsSchema, DownloadOptions } from './types';
 import { FileValidator, CookieValidator } from './utils/validators';
 import { YTDLPProcessManager } from './yt-dlp';
 import { BrowserManager } from './utils/browserManager';
+import { PlaylistExpander } from './extractors/playlistExpander';
+import { getBinaryVersions, updateYtdlp } from './utils/binaryVersions';
 
 // Validate required binaries exist before accepting any traffic
 const ffmpegExe = path.join(config.ffmpegPath, 'ffmpeg.exe');
@@ -43,7 +45,13 @@ app.use(express.json());
 
 // Health Check
 app.get('/api/health', (_req, res) => {
-  res.json({ status: 'ok', version: '1.0.0' });
+  res.json({ status: 'ok', version: '1.0.0', binaries: getBinaryVersions() });
+});
+
+// Update yt-dlp (built-in self-update)
+app.post('/api/update/ytdlp', (_req, res) => {
+  const result = updateYtdlp();
+  res.status(result.ok ? 200 : 500).json(result);
 });
 
 // Analyze URL
@@ -74,9 +82,29 @@ app.post('/api/analyze', async (req, res) => {
 app.post('/api/download', async (req, res) => {
   try {
     const data = DownloadRequestSchema.parse(req.body);
-    const { url, format, audioOnly } = data;
+    const { url, format, audioOnly, playlist, formatId, subtitles, embedThumbnail } = data;
     const effectiveFormat = audioOnly ? 'bestaudio' : format;
-    const taskId = await QueueManager.add(url, { title: 'Extracting...', format: effectiveFormat });
+
+    const optionsObj: DownloadOptions = {};
+    if (formatId) optionsObj.formatId = formatId;
+    if (subtitles) optionsObj.subtitles = true;
+    if (embedThumbnail) optionsObj.embedThumbnail = true;
+    const optionsJson = Object.keys(optionsObj).length ? JSON.stringify(optionsObj) : undefined;
+    const enqueue = (u: string) =>
+      QueueManager.add(u, { title: 'Extracting...', format: effectiveFormat, options: optionsJson });
+
+    // Playlist/channel: expand to entries and enqueue each as its own task.
+    if (playlist) {
+      const urls = await PlaylistExpander.expand(url);
+      if (urls.length > 0) {
+        const taskIds = [];
+        for (const u of urls) taskIds.push(await enqueue(u));
+        return res.json({ playlist: true, count: taskIds.length, taskIds });
+      }
+      // Not actually a playlist — fall through to a single download.
+    }
+
+    const taskId = await enqueue(url);
     res.json({ taskId });
   } catch (err: any) {
     if (err instanceof ZodError) {
@@ -112,8 +140,33 @@ app.put('/api/tasks/:id/status', (req, res) => {
 app.post('/api/tasks/:id/cancel', (req, res) => {
   const task = tasks.getById(req.params.id);
   if (!task) return res.status(404).json({ error: 'Task not found' });
-  YTDLPProcessManager.cancel(req.params.id);
+  // Mark cancelled BEFORE killing so the download loop won't retry on the kill.
   tasks.update(req.params.id, { status: 'cancelled' });
+  YTDLPProcessManager.cancel(req.params.id);
+  res.json({ success: true });
+});
+
+// Pause Task — kill the process but keep the .part for resume (yt-dlp --continue).
+app.post('/api/tasks/:id/pause', (req, res) => {
+  const task = tasks.getById(req.params.id);
+  if (!task) return res.status(404).json({ error: 'Task not found' });
+  if (!['downloading', 'queued', 'extracting', 'processing'].includes(task.status)) {
+    return res.status(400).json({ error: `Cannot pause a ${task.status} task` });
+  }
+  tasks.update(req.params.id, { status: 'paused' });
+  YTDLPProcessManager.cancel(req.params.id);
+  res.json({ success: true });
+});
+
+// Resume a paused task — requeue it; yt-dlp --continue picks up the .part.
+app.post('/api/tasks/:id/resume', (req, res) => {
+  const task = tasks.getById(req.params.id);
+  if (!task) return res.status(404).json({ error: 'Task not found' });
+  if (task.status !== 'paused') {
+    return res.status(400).json({ error: 'Task is not paused' });
+  }
+  tasks.update(req.params.id, { status: 'queued' });
+  QueueManager.process();
   res.json({ success: true });
 });
 

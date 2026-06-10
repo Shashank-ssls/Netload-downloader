@@ -24,6 +24,7 @@ db.exec(`
     path TEXT,
     error TEXT,
     note TEXT,
+    options TEXT,
     createdAt INTEGER,
     updatedAt INTEGER
   );
@@ -36,27 +37,32 @@ db.exec(`
   CREATE INDEX IF NOT EXISTS idx_tasks_status ON tasks(status);
 `);
 
-// Migrate older databases that predate the `note` column.
-const hasNote = db.prepare("PRAGMA table_info(tasks)").all().some((c: any) => c.name === 'note');
-if (!hasNote) {
-  db.exec('ALTER TABLE tasks ADD COLUMN note TEXT');
+// Migrate older databases that predate newer columns.
+const existingCols = new Set(
+  db.prepare('PRAGMA table_info(tasks)').all().map((c: any) => c.name),
+);
+for (const col of ['note', 'options']) {
+  if (!existingCols.has(col)) db.exec(`ALTER TABLE tasks ADD COLUMN ${col} TEXT`);
 }
 
 export const taskEvents = new EventEmitter();
 
 const ALLOWED_TASK_KEYS = new Set([
   'title', 'status', 'progress', 'speed', 'eta', 'filesize',
-  'thumbnail', 'uploader', 'format', 'path', 'error', 'note',
+  'thumbnail', 'uploader', 'format', 'path', 'error', 'note', 'options',
 ]);
 
 export const tasks = {
   create: (task: Partial<Task>) => {
     const stmt = db.prepare(`
-      INSERT INTO tasks (id, url, title, status, progress, createdAt, updatedAt)
-      VALUES (?, ?, ?, ?, ?, ?, ?)
+      INSERT INTO tasks (id, url, title, status, progress, format, options, createdAt, updatedAt)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
     `);
     const now = Date.now();
-    stmt.run(task.id, task.url, task.title, task.status, task.progress || 0, now, now);
+    stmt.run(
+      task.id, task.url, task.title, task.status, task.progress || 0,
+      task.format ?? null, task.options ?? null, now, now,
+    );
     const created = db.prepare('SELECT * FROM tasks WHERE id = ?').get(task.id) as Task;
     taskEvents.emit('task:created', created);
   },

@@ -1,7 +1,7 @@
 import { YTDLPProcessManager } from './yt-dlp';
 import { tasks } from './database';
 import { config } from './config';
-import { ProgressData, Task, CapturedStream } from './types';
+import { ProgressData, Task, CapturedStream, DownloadOptions } from './types';
 import logger from './logger';
 import path from 'path';
 import { ProviderDetector } from './providers/detector';
@@ -10,6 +10,7 @@ import { FallbackExtractor, DURATION_FLOOR_SEC, BYTES_FLOOR } from './extractors
 import { SegmentStitcher } from './extractors/segmentStitcher';
 import { CloudflareRecoveryManager } from './recovery/cloudflare';
 import { FileValidator } from './utils/validators';
+import { CookieResolver } from './utils/cookieResolver';
 import { UARotator } from './utils/userAgents';
 
 // Patterns that indicate the target URL is a direct media stream
@@ -33,6 +34,12 @@ export async function downloadMedia(taskId: string, onProgress: (data: ProgressD
 
   const provider = ProviderDetector.detect(task.url);
   const maxRetries = CloudflareRecoveryManager.MAX_RETRIES;
+
+  // Per-site cookies (falls back to the global cookies.txt) and per-download options.
+  const cookiesPath = CookieResolver.resolve(task.url) || undefined;
+  let opts: DownloadOptions = {};
+  try { if (task.options) opts = JSON.parse(task.options); } catch { /* ignore bad JSON */ }
+
   let attempt = 0;
   let targetUrl = task.url;
   let capturedHeaders: Record<string, string> = {};
@@ -64,15 +71,25 @@ export async function downloadMedia(taskId: string, onProgress: (data: ProgressD
 
     const args = [targetUrl];
 
-    // Format / audio-only strategy
+    // Format / audio-only strategy. A user-chosen format (task.format from the
+    // request, or opts.formatId from the analyze ladder) takes precedence.
+    const effFormat = task.format || opts.formatId;
     if (task.format === 'bestaudio') {
       args.push('-f', 'bestaudio/best', '-x', '--audio-format', 'mp3');
     } else if (isFallbackStream) {
       args.push('-f', 'best');
-    } else if (task.format) {
-      args.push('-f', task.format);
+    } else if (effFormat) {
+      args.push('-f', effFormat);
     } else {
       args.push('-f', provider.getFormatStrategy());
+    }
+
+    // Optional subtitle / thumbnail embedding (not for raw fallback streams).
+    if (opts.subtitles && task.format !== 'bestaudio' && !isFallbackStream) {
+      args.push('--write-subs', '--write-auto-subs', '--sub-langs', 'en.*', '--embed-subs');
+    }
+    if (opts.embedThumbnail) {
+      args.push('--embed-thumbnail');
     }
 
     // Cap individual file size when configured (0 = unlimited).
@@ -116,6 +133,7 @@ export async function downloadMedia(taskId: string, onProgress: (data: ProgressD
 
       await YTDLPProcessManager.spawn(taskId, {
         args,
+        cookiesPath,
         onProgress: (data) => {
           tasks.update(taskId, {
             progress: data.progress,
@@ -141,6 +159,14 @@ export async function downloadMedia(taskId: string, onProgress: (data: ProgressD
         },
       });
 
+      // A killed process (pause/cancel) exits with code null, which spawn treats
+      // as a resolve — so re-check status here and stop without marking completed.
+      const afterSpawn = tasks.getById(taskId);
+      if (afterSpawn?.status === 'paused' || afterSpawn?.status === 'cancelled') {
+        logger.info({ taskId, status: afterSpawn.status }, 'Download stopped by user — not finalizing');
+        return 'STOPPED';
+      }
+
       const finalPath = discoveredPath || tasks.getById(taskId)?.path;
 
       // Size sanity-check for fallback candidates. Because candidates are already
@@ -161,6 +187,14 @@ export async function downloadMedia(taskId: string, onProgress: (data: ProgressD
       return 'SUCCESS';
 
     } catch (err) {
+      // If the user paused or cancelled mid-download, the spawn was killed on
+      // purpose — stop cleanly without retrying or marking the task failed.
+      const cur = tasks.getById(taskId);
+      if (cur?.status === 'paused' || cur?.status === 'cancelled') {
+        logger.info({ taskId, status: cur.status }, 'Download stopped by user — not retrying');
+        return 'STOPPED';
+      }
+
       const errorType = provider.classifyError(stderrOutput) || YTDLPProcessManager.classifyError(stderrOutput);
       logger.error({ taskId, attempt, errorType }, 'Download execution failed');
 

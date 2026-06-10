@@ -13,6 +13,8 @@ export const config = {
   ffmpegPath: path.resolve(process.env.FFMPEG_PATH || './ffmpeg'),
   ytdlpPath: path.resolve(process.env.YTDLP_PATH || './yt-dlp/yt-dlp.exe'),
   cookiesPath: path.resolve(process.env.COOKIES_PATH || './cookies/cookies.txt'),
+  // Per-site cookies live here as `<host>.txt` (falls back to cookiesPath).
+  cookiesDir: path.resolve(process.env.COOKIES_DIR || './cookies'),
   nodePath: process.env.NODE_PATH || 'F:\\Apps\\NodeJS',
 
   // Download guards. maxFilesizeMB=0 means unlimited; minFreeSpaceMB is the

@@ -3,6 +3,9 @@
   "version": "1.0.0",
   "description": "Hardened yt-dlp orchestration backend",
   "main": "dist/index.js",
+  "bin": {
+    "netload": "dist/cli.js"
+  },
   "engines": {
     "node": ">=20"
   },
@@ -10,6 +13,7 @@
     "build": "rimraf dist && tsc",
     "start": "node dist/index.js",
     "dev": "ts-node-dev --respawn --transpile-only src/index.ts",
+    "cli": "node dist/cli.js",
     "test": "vitest run",
     "test:watch": "vitest",
     "typecheck": "tsc --noEmit",
