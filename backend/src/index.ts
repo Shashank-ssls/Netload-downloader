@@ -17,6 +17,7 @@ import { FileValidator, CookieValidator } from './utils/validators';
 import { YTDLPProcessManager } from './yt-dlp';
 import { BrowserManager } from './utils/browserManager';
 import { PlaylistExpander } from './extractors/playlistExpander';
+import { Diagnostics } from './extractors/diagnostics';
 import { getBinaryVersions, updateYtdlp } from './utils/binaryVersions';
 import { SsrfGuard } from './utils/ssrfGuard';
 import { apiTokenMiddleware, rateLimiter } from './middleware/security';
@@ -89,6 +90,33 @@ app.post('/api/analyze', rateLimiter(config.rateLimitPerMin), async (req, res) =
   } catch (err: any) {
     const status = err.message === 'NETWORK_TIMEOUT' ? 504 : 500;
     res.status(status).json({ error: err.message });
+  }
+});
+
+// Diagnose URL — open it headless and dump a full inspection report (every
+// request/response, player globals, MSE/Blob activity, iframe chain) plus
+// plain-language hints. For onboarding a NEW site that failed to download.
+app.post('/api/diagnose', rateLimiter(config.rateLimitPerMin), async (req, res) => {
+  const { url } = req.body;
+  if (!url || typeof url !== 'string') {
+    return res.status(400).json({ error: 'URL required' });
+  }
+  try {
+    const parsed = new URL(url);
+    if (!['http:', 'https:'].includes(parsed.protocol)) {
+      return res.status(400).json({ error: 'Only HTTP/HTTPS URLs are supported' });
+    }
+    SsrfGuard.assertSafe(url);
+  } catch (e: any) {
+    const msg = e?.message === 'BLOCKED_PRIVATE_URL' ? 'Private/loopback URLs are not allowed' : 'Invalid URL';
+    return res.status(400).json({ error: msg });
+  }
+
+  try {
+    res.json(await Diagnostics.run(url));
+  } catch (err: any) {
+    logger.error({ url, err: err.message }, 'Diagnose failed');
+    res.status(500).json({ error: err.message });
   }
 });
 

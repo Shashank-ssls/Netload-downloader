@@ -29,6 +29,7 @@ function printHelp(): void {
   console.log(`netload <url> [options]
 netload batch <file>    download every URL in a file (one per line) as one job
 netload corpus [path]   measure reach across a URL corpus (analyze only)
+netload diagnose <url>  inspect a (new/failing) site and report why it does/doesn't work
 
   --audio          audio only (mp3)
   --format <id>    specific format id (from analyze)
@@ -210,6 +211,78 @@ async function runBatch(args: string[]): Promise<void> {
   }
 }
 
+interface DiagReportView {
+  url: string;
+  finalUrl: string;
+  durationMs: number;
+  totalRequests: number;
+  byResourceType: Record<string, number>;
+  mediaRequests: { url: string; resourceType: string; contentType?: string; mediaKind?: string; status?: number }[];
+  page: {
+    videos: { src: string; currentSrc: string; usesBlob: boolean }[];
+    playerGlobals: string[];
+    mediaSourceUsed: boolean;
+    appendBufferCount: number;
+    sourceBufferMimes: string[];
+    blobUrlCount: number;
+    iframeChain: string[];
+  };
+  hints: string[];
+}
+
+async function runDiagnose(args: string[]): Promise<void> {
+  const url = args.find((a) => !a.startsWith('-'));
+  if (!url) {
+    console.error('usage: netload diagnose <url>');
+    process.exit(1);
+  }
+  const json = args.includes('--json');
+
+  let resp: Response;
+  try {
+    resp = await fetch(`${API}/api/diagnose`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ url }),
+    });
+  } catch {
+    console.error(`error: cannot reach backend at ${API} — is it running?`);
+    process.exit(1);
+  }
+  if (!resp.ok) {
+    console.error(`error: ${resp.status} ${await resp.text()}`);
+    process.exit(1);
+  }
+  const r = (await resp.json()) as DiagReportView;
+
+  if (json) {
+    console.log(JSON.stringify(r, null, 2));
+    return;
+  }
+
+  console.log(`\nDiagnose: ${r.url}`);
+  if (r.finalUrl && r.finalUrl !== r.url) console.log(`  final URL: ${r.finalUrl}`);
+  const byType = Object.entries(r.byResourceType).map(([k, v]) => `${k}:${v}`).join('  ');
+  console.log(`  ${r.totalRequests} requests in ${(r.durationMs / 1000).toFixed(1)}s  [${byType}]`);
+
+  console.log(`\n  Media responses (${r.mediaRequests.length}):`);
+  if (r.mediaRequests.length === 0) console.log('    (none seen on the network)');
+  for (const m of r.mediaRequests.slice(0, 20)) {
+    console.log(`    [${m.mediaKind}] ${m.status ?? ''} ${m.contentType ?? ''}\n      ${m.url.slice(0, 110)}`);
+  }
+
+  const p = r.page;
+  console.log(`\n  Player: globals=[${p.playerGlobals.join(', ') || 'none'}]  MSE=${p.mediaSourceUsed}  appendBuffer=${p.appendBufferCount}  blobURLs=${p.blobUrlCount}`);
+  if (p.sourceBufferMimes.length) console.log(`    SourceBuffer mimes: ${p.sourceBufferMimes.join(', ')}`);
+  for (const v of p.videos) console.log(`    <video> src=${(v.currentSrc || v.src || '(none)').slice(0, 90)}${v.usesBlob ? '  [blob:]' : ''}`);
+  if (p.iframeChain.length) console.log(`    iframes: ${p.iframeChain.length}`);
+
+  console.log(`\n  Hints:`);
+  if (r.hints.length === 0) console.log('    (no specific hints)');
+  for (const h of r.hints) console.log(`    - ${h}`);
+  console.log('');
+}
+
 async function main(): Promise<void> {
   const argv = process.argv.slice(2);
   if (argv[0] === 'batch') {
@@ -218,6 +291,10 @@ async function main(): Promise<void> {
   }
   if (argv[0] === 'corpus') {
     await runCorpus(argv.slice(1));
+    return;
+  }
+  if (argv[0] === 'diagnose') {
+    await runDiagnose(argv.slice(1));
     return;
   }
   if (argv.length === 0 || argv.includes('-h') || argv.includes('--help')) {
