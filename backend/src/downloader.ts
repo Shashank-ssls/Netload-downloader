@@ -1,4 +1,3 @@
-import fs from 'fs';
 import { YTDLPProcessManager } from './yt-dlp';
 import { tasks } from './database';
 import { config } from './config';

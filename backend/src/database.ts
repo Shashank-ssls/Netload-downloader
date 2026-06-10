@@ -1,7 +1,6 @@
 import Database, { Database as DB } from 'better-sqlite3';
 import { EventEmitter } from 'events';
 import { config } from './config';
-import logger from './logger';
 import { Task, TaskStatus } from './types';
 
 const db: DB = new Database(config.databasePath);

@@ -151,14 +151,15 @@ export class FallbackExtractor {
     return list;
   }
 
-  private static isAboveFloor(m?: StreamMagnitude): boolean {
+  // `static` (not private) so the ranking logic can be unit-tested directly.
+  static isAboveFloor(m?: StreamMagnitude): boolean {
     if (!m) return false;
     if (m.durationSec !== undefined && m.durationSec >= DURATION_FLOOR_SEC) return true;
     if (m.bytes !== undefined && m.bytes >= BYTES_FLOOR) return true;
     return false;
   }
 
-  private static isMeasured(m?: StreamMagnitude): boolean {
+  static isMeasured(m?: StreamMagnitude): boolean {
     return !!m && (m.durationSec !== undefined || m.bytes !== undefined);
   }
 
@@ -168,7 +169,7 @@ export class FallbackExtractor {
    *   page) > tiny preview/placeholder > known ad host.
    * Keyword score breaks ties within a tier.
    */
-  private static candidateRank(c: CapturedStream): number {
+  static candidateRank(c: CapturedStream): number {
     const ks = this.scoreStream(c.url);
     if (ks <= -100) return -1_000_000 + ks;             // known ad host → always last
 
@@ -247,7 +248,7 @@ export class FallbackExtractor {
     return m ? this.parseIso8601Duration(m[1]) : undefined;
   }
 
-  private static parseIso8601Duration(s: string): number | undefined {
+  static parseIso8601Duration(s: string): number | undefined {
     const m = s.match(/P(?:(\d+)D)?T(?:(\d+)H)?(?:(\d+)M)?(?:([\d.]+)S)?/i);
     if (!m) return undefined;
     const [, d, h, min, sec] = m;
@@ -555,7 +556,7 @@ export class FallbackExtractor {
    * mp4 (which is frequently a short marquee/teaser loop). Known junk keywords
    * are penalised heavily.
    */
-  private static scoreStream(url: string): number {
+  static scoreStream(url: string): number {
     const u = url.toLowerCase();
     let score = 0;
 

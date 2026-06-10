@@ -19,9 +19,9 @@ const browsersPath = process.env.PLAYWRIGHT_BROWSERS_PATH
 process.env.PLAYWRIGHT_BROWSERS_PATH = browsersPath;
 
 import { chromium as playwrightChromium } from 'playwright-core';
-// @ts-ignore
+// @ts-ignore — playwright-extra / stealth plugin ship no bundled type declarations
 import { chromium as stealthChromium } from 'playwright-extra';
-// @ts-ignore
+// @ts-ignore — playwright-extra / stealth plugin ship no bundled type declarations
 import StealthPlugin from 'puppeteer-extra-plugin-stealth';
 
 stealthChromium.use(StealthPlugin());

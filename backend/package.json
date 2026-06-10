@@ -3,10 +3,19 @@
   "version": "1.0.0",
   "description": "Hardened yt-dlp orchestration backend",
   "main": "dist/index.js",
+  "engines": {
+    "node": ">=20"
+  },
   "scripts": {
     "build": "rimraf dist && tsc",
     "start": "node dist/index.js",
     "dev": "ts-node-dev --respawn --transpile-only src/index.ts",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "typecheck": "tsc --noEmit",
+    "lint": "eslint \"src/**/*.ts\" \"test/**/*.ts\"",
+    "format": "prettier --write \"src/**/*.ts\" \"test/**/*.ts\"",
+    "format:check": "prettier --check \"src/**/*.ts\" \"test/**/*.ts\"",
     "download-binaries": "powershell -ExecutionPolicy Bypass -File scripts/download-binaries.ps1",
     "create-venv": "powershell -ExecutionPolicy Bypass -File scripts/create-venv.ps1",
     "install-deps": "powershell -ExecutionPolicy Bypass -File scripts/install-backend.ps1"
@@ -26,7 +35,6 @@
     "playwright-core": "^1.60.0",
     "playwright-extra": "^4.3.6",
     "puppeteer-extra-plugin-stealth": "^2.11.2",
-    "uuid": "^9.0.1",
     "ws": "^8.17.0",
     "zod": "^3.23.8"
   },
@@ -35,10 +43,16 @@
     "@types/cors": "^2.8.19",
     "@types/express": "^4.17.21",
     "@types/node": "^20.12.12",
-    "@types/uuid": "^9.0.8",
     "@types/ws": "^8.5.10",
+    "@eslint/js": "^9.9.0",
+    "@typescript-eslint/eslint-plugin": "^8.0.0",
+    "@typescript-eslint/parser": "^8.0.0",
+    "eslint": "^9.9.0",
+    "prettier": "^3.3.3",
     "rimraf": "^5.0.7",
     "ts-node-dev": "^2.0.0",
-    "typescript": "^5.4.5"
+    "typescript": "^5.4.5",
+    "typescript-eslint": "^8.0.0",
+    "vitest": "^2.0.5"
   }
 }

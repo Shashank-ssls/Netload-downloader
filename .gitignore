@@ -47,3 +47,6 @@ desktop.ini
 # MPEG-TS video. Downloaded media lives in F:/MediaDownloads (outside the repo)
 # and backend/downloads + backend/temp are already ignored by path above.
 
+
+# Claude Code local settings
+.claude/settings.local.json

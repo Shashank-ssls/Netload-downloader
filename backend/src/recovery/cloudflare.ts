@@ -12,7 +12,6 @@
 
 import logger from '../logger';
 import { BrowserManager } from '../utils/browserManager';
-import { UARotator } from '../utils/userAgents';
 import { BrowserHelpers } from '../utils/browserHelpers';
 
 export interface CloudflareTokens {

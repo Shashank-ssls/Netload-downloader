@@ -1,5 +1,3 @@
-import { UARotator } from './userAgents';
-
 export class HeaderBuilder {
   static getBaseHeaders(url: string): Record<string, string> {
     const headers: Record<string, string> = {

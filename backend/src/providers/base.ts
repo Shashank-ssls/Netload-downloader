@@ -1,5 +1,3 @@
-import { AnalysisResult } from '../types';
-
 export interface ProviderCapabilities {
   supportsCookies: boolean;
   supportsM3U8: boolean;

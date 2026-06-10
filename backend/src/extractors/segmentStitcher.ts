@@ -108,8 +108,9 @@ export class SegmentStitcher {
     return null;
   }
 
-  /** origin + path up to (and including) the last '/', e.g. https://h/stream/ */
-  private static dirPrefix(url: string): string | null {
+  /** origin + path up to (and including) the last '/', e.g. https://h/stream/.
+   *  `static` (not private) so it can be unit-tested directly. */
+  static dirPrefix(url: string): string | null {
     try {
       const u = new URL(url);
       const dir = u.pathname.slice(0, u.pathname.lastIndexOf('/') + 1);
@@ -262,7 +263,7 @@ export class SegmentStitcher {
    * Master playlists (variants only, no #EXTINF) are skipped here — we keep the
    * captured text with the most segments, which is the media playlist.
    */
-  private static parsePlaylist(text: string, baseHint: string): { segments: string[]; durationSec: number } | null {
+  static parsePlaylist(text: string, baseHint: string): { segments: string[]; durationSec: number } | null {
     if (text.indexOf('#EXTINF') === -1) return null;     // not a media playlist
     const segments: string[] = [];
     let durationSec = 0;
@@ -280,7 +281,7 @@ export class SegmentStitcher {
     return segments.length ? { segments, durationSec } : null;
   }
 
-  private static resolveSegUrl(uri: string, baseHint: string): string | null {
+  static resolveSegUrl(uri: string, baseHint: string): string | null {
     if (uri.startsWith('http')) return uri;
     if (uri.startsWith('//')) return 'https:' + uri;
     try { return new URL(uri, baseHint).href; } catch { return null; }

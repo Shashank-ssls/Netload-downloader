@@ -45,13 +45,29 @@ export interface MetadataInfo {
   thumbnail: string;
 }
 
+/** A single downloadable format from yt-dlp's `-J` output (loosely typed —
+ *  yt-dlp emits many optional/extra fields per extractor). */
+export interface MediaFormat {
+  format_id?: string;
+  ext?: string;
+  height?: number | null;
+  width?: number | null;
+  resolution?: string;
+  vcodec?: string;
+  acodec?: string;
+  filesize?: number | null;
+  filesize_approx?: number | null;
+  url?: string;
+  [key: string]: unknown;
+}
+
 export interface AnalysisResult {
   title: string;
   duration: number;
   thumbnail: string;
   uploader: string;
   extractor: string;
-  formats: any[];
+  formats: MediaFormat[];
   filesize: number;
   vcodec: string;
   acodec: string;
