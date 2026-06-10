@@ -25,6 +25,7 @@ db.exec(`
     error TEXT,
     note TEXT,
     options TEXT,
+    jobId TEXT,
     createdAt INTEGER,
     updatedAt INTEGER
   );
@@ -41,9 +42,10 @@ db.exec(`
 const existingCols = new Set(
   db.prepare('PRAGMA table_info(tasks)').all().map((c: any) => c.name),
 );
-for (const col of ['note', 'options']) {
+for (const col of ['note', 'options', 'jobId']) {
   if (!existingCols.has(col)) db.exec(`ALTER TABLE tasks ADD COLUMN ${col} TEXT`);
 }
+db.exec('CREATE INDEX IF NOT EXISTS idx_tasks_jobId ON tasks(jobId)');
 
 export const taskEvents = new EventEmitter();
 
@@ -55,13 +57,13 @@ const ALLOWED_TASK_KEYS = new Set([
 export const tasks = {
   create: (task: Partial<Task>) => {
     const stmt = db.prepare(`
-      INSERT INTO tasks (id, url, title, status, progress, format, options, createdAt, updatedAt)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+      INSERT INTO tasks (id, url, title, status, progress, format, options, jobId, createdAt, updatedAt)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `);
     const now = Date.now();
     stmt.run(
       task.id, task.url, task.title, task.status, task.progress || 0,
-      task.format ?? null, task.options ?? null, now, now,
+      task.format ?? null, task.options ?? null, task.jobId ?? null, now, now,
     );
     const created = db.prepare('SELECT * FROM tasks WHERE id = ?').get(task.id) as Task;
     taskEvents.emit('task:created', created);
@@ -88,6 +90,10 @@ export const tasks = {
 
   getAll: (): Task[] => {
     return db.prepare('SELECT * FROM tasks ORDER BY createdAt DESC').all() as Task[];
+  },
+
+  getByJob: (jobId: string): Task[] => {
+    return db.prepare('SELECT * FROM tasks WHERE jobId = ? ORDER BY createdAt ASC').all(jobId) as Task[];
   },
 
   delete: (id: string) => {

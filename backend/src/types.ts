@@ -30,6 +30,7 @@ export interface Task {
   error?: string;
   note?: string;
   options?: string; // JSON-encoded DownloadOptions
+  jobId?: string;   // groups tasks created by one /api/batch call
   createdAt: number;
   updatedAt: number;
 }
@@ -114,6 +115,18 @@ export const DownloadRequestSchema = z.object({
 });
 
 export type DownloadRequest = z.infer<typeof DownloadRequestSchema>;
+
+export const BatchRequestSchema = z.object({
+  urls: z.union([z.array(z.string()), z.string()]),
+  format: z.string().optional(),
+  audioOnly: z.boolean().optional().default(false),
+  playlist: z.boolean().optional().default(false),
+  formatId: z.string().optional(),
+  subtitles: z.boolean().optional().default(false),
+  embedThumbnail: z.boolean().optional().default(false),
+});
+
+export type BatchRequest = z.infer<typeof BatchRequestSchema>;
 
 export const SettingsSchema = z.object({
   downloadDir: z

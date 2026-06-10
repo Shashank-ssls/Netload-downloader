@@ -3,6 +3,7 @@
  * netload — thin CLI over the running backend API.
  *
  *   netload <url> [--audio] [--format <id>] [--playlist] [--subs] [--thumb]
+ *   netload batch <file>       download every URL in a file as one job
  *   netload corpus [path]      measure reach across a URL corpus (analyze only)
  *
  * Requires the backend to be running (npm run dev / start). Set NETLOAD_API to
@@ -26,6 +27,7 @@ interface TaskView {
 
 function printHelp(): void {
   console.log(`netload <url> [options]
+netload batch <file>    download every URL in a file (one per line) as one job
 netload corpus [path]   measure reach across a URL corpus (analyze only)
 
   --audio          audio only (mp3)
@@ -127,8 +129,86 @@ async function runCorpus(args: string[]): Promise<void> {
   }
 }
 
+interface JobView {
+  done: boolean;
+  total: number;
+  counts: Record<string, number>;
+  tasks: { title?: string; url: string; status: string; error?: string; note?: string; path?: string }[];
+}
+
+async function runBatch(args: string[]): Promise<void> {
+  const file = args.find((a) => !a.startsWith('-'));
+  if (!file) {
+    console.error('usage: netload batch <file> [--audio] [--format <id>] [--playlist] [--subs] [--thumb]');
+    process.exit(1);
+  }
+  let urls: string[];
+  try {
+    urls = fs.readFileSync(path.resolve(file), 'utf8').split(/\r?\n/);
+  } catch {
+    console.error(`error: cannot read ${file}`);
+    process.exit(1);
+  }
+
+  const body: Record<string, unknown> = {
+    urls,
+    audioOnly: args.includes('--audio'),
+    playlist: args.includes('--playlist'),
+    subtitles: args.includes('--subs'),
+    embedThumbnail: args.includes('--thumb'),
+  };
+  const fIdx = args.indexOf('--format');
+  if (fIdx >= 0 && args[fIdx + 1]) body.formatId = args[fIdx + 1];
+
+  let resp: Response;
+  try {
+    resp = await fetch(`${API}/api/batch`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+    });
+  } catch {
+    console.error(`error: cannot reach backend at ${API} — is it running?`);
+    process.exit(1);
+  }
+  if (!resp.ok) {
+    console.error(`error: ${resp.status} ${await resp.text()}`);
+    process.exit(1);
+  }
+
+  const { jobId, count } = (await resp.json()) as { jobId: string; count: number };
+  console.log(`job ${jobId.slice(0, 8)} — ${count} task(s) queued`);
+
+  for (;;) {
+    const j = (await (await fetch(`${API}/api/jobs/${jobId}`)).json()) as JobView;
+    const summary = Object.entries(j.counts).map(([k, v]) => `${k}:${v}`).join('  ');
+    process.stdout.write(`\r  ${summary.padEnd(64)}`);
+    if (j.done) {
+      process.stdout.write('\n\n');
+      for (const t of j.tasks) {
+        const mark = t.status === 'completed' ? 'OK ' : t.status === 'failed' ? 'ERR' : t.status.slice(0, 3).toUpperCase();
+        const detail =
+          t.status === 'completed' ? `${t.path ?? ''}${t.note ? `  [${t.note}]` : ''}` : t.error || t.status;
+        // Show the URL when the title never resolved (e.g. a task that failed early).
+        const label = t.title && t.title !== 'Extracting...' ? t.title : t.url;
+        console.log(`  ${mark}  ${label.slice(0, 48).padEnd(48)} ${detail}`);
+      }
+      const ok = j.counts.completed || 0;
+      const failed = j.counts.failed || 0;
+      console.log(`\n${ok} completed, ${failed} failed, ${j.total} total`);
+      if (failed > 0) process.exit(1);
+      return;
+    }
+    await new Promise((r) => setTimeout(r, 2000));
+  }
+}
+
 async function main(): Promise<void> {
   const argv = process.argv.slice(2);
+  if (argv[0] === 'batch') {
+    await runBatch(argv.slice(1));
+    return;
+  }
   if (argv[0] === 'corpus') {
     await runCorpus(argv.slice(1));
     return;

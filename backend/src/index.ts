@@ -1,6 +1,7 @@
 import express, { Request, Response, NextFunction } from 'express';
 import cors from 'cors';
 import { createServer } from 'http';
+import { randomUUID } from 'crypto';
 import path from 'path';
 import fs from 'fs';
 import { ZodError } from 'zod';
@@ -10,7 +11,8 @@ import { initWebSocket, setupTaskBroadcasts } from './progress';
 import { tasks, closeDatabase } from './database';
 import { analyzeUrl } from './analyzer';
 import { QueueManager } from './queue';
-import { DownloadRequestSchema, TaskStatusSchema, SettingsSchema, DownloadOptions } from './types';
+import { DownloadRequestSchema, BatchRequestSchema, TaskStatusSchema, SettingsSchema, DownloadOptions } from './types';
+import { parseUrlList, summarizeJob } from './jobs';
 import { FileValidator, CookieValidator } from './utils/validators';
 import { YTDLPProcessManager } from './yt-dlp';
 import { BrowserManager } from './utils/browserManager';
@@ -128,6 +130,51 @@ app.post('/api/download', rateLimiter(config.rateLimitPerMin), async (req, res) 
     }
     res.status(400).json({ error: err.message });
   }
+});
+
+// Create a Batch Job — fan a list of URLs (or a pasted blob) out to one job.
+app.post('/api/batch', rateLimiter(config.rateLimitPerMin), async (req, res) => {
+  try {
+    const data = BatchRequestSchema.parse(req.body);
+    const urls = parseUrlList(data.urls);
+    if (urls.length === 0) return res.status(400).json({ error: 'No valid http(s) URLs' });
+
+    const optionsObj: DownloadOptions = {};
+    if (data.formatId) optionsObj.formatId = data.formatId;
+    if (data.subtitles) optionsObj.subtitles = true;
+    if (data.embedThumbnail) optionsObj.embedThumbnail = true;
+    const optionsJson = Object.keys(optionsObj).length ? JSON.stringify(optionsObj) : undefined;
+    const effectiveFormat = data.audioOnly ? 'bestaudio' : data.format;
+    const jobId = randomUUID();
+    const enqueue = (u: string) =>
+      QueueManager.add(u, { title: 'Extracting...', format: effectiveFormat, options: optionsJson, jobId });
+
+    const taskIds: string[] = [];
+    for (const url of urls) {
+      try { SsrfGuard.assertSafe(url); } catch { continue; } // skip private/loopback
+      let targets = [url];
+      if (data.playlist) {
+        const expanded = await PlaylistExpander.expand(url);
+        if (expanded.length > 0) {
+          targets = expanded.filter((u) => { try { SsrfGuard.assertSafe(u); return true; } catch { return false; } });
+        }
+      }
+      for (const t of targets) taskIds.push(await enqueue(t));
+    }
+
+    if (taskIds.length === 0) return res.status(400).json({ error: 'No downloadable URLs after filtering' });
+    res.json({ jobId, count: taskIds.length, taskIds });
+  } catch (err: any) {
+    if (err instanceof ZodError) return res.status(400).json({ error: err.flatten() });
+    res.status(400).json({ error: err.message });
+  }
+});
+
+// Job summary — per-item status + counts for one batch.
+app.get('/api/jobs/:jobId', (req, res) => {
+  const jobTasks = tasks.getByJob(req.params.jobId);
+  if (jobTasks.length === 0) return res.status(404).json({ error: 'Job not found' });
+  res.json(summarizeJob(req.params.jobId, jobTasks));
 });
 
 // Get All Tasks

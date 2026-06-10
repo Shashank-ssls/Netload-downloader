@@ -14,6 +14,7 @@
     "start": "node dist/index.js",
     "dev": "ts-node-dev --respawn --transpile-only src/index.ts",
     "cli": "node dist/cli.js",
+    "batch": "node dist/cli.js batch",
     "corpus": "node dist/cli.js corpus",
     "test": "vitest run",
     "test:watch": "vitest",
