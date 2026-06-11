@@ -54,6 +54,43 @@ export class BrowserProfiles {
     return host ? path.join(config.profilesDir, `${host}.json`) : null;
   }
 
+  /** All saved per-host session profiles (host, cookie/origin counts, savedAt). */
+  static list(dir = config.profilesDir): { host: string; cookies: number; origins: number; savedAt: number }[] {
+    try {
+      return fs.readdirSync(dir)
+        .filter((f) => f.endsWith('.json'))
+        .map((f) => {
+          const file = path.join(dir, f);
+          let cookies = 0; let origins = 0;
+          try {
+            const s = JSON.parse(fs.readFileSync(file, 'utf8')) as StorageState;
+            cookies = s.cookies?.length || 0;
+            origins = s.origins?.length || 0;
+          } catch { /* unreadable profile */ }
+          return { host: f.replace(/\.json$/, ''), cookies, origins, savedAt: fs.statSync(file).mtimeMs };
+        })
+        .sort((a, b) => b.savedAt - a.savedAt);
+    } catch {
+      return []; // no profiles dir yet
+    }
+  }
+
+  /** Delete a host's saved session profile. Returns true if a file was removed. */
+  static remove(host: string, dir = config.profilesDir): boolean {
+    const safe = (host || '').replace(/^www\./, '').toLowerCase().replace(/[^a-z0-9.-]/g, '');
+    if (!safe) return false;
+    const file = path.join(dir, `${safe}.json`);
+    try {
+      if (!fs.existsSync(file)) return false;
+      fs.unlinkSync(file);
+      logger.info({ host: safe }, 'Removed saved session profile');
+      return true;
+    } catch (err: any) {
+      logger.warn({ err: err.message, host: safe }, 'Could not remove session profile');
+      return false;
+    }
+  }
+
   /** A storageState file path for `browser.newContext({ storageState })`, or
    *  undefined if there's no saved profile for this host. */
   static storageStateOption(url: string): string | undefined {

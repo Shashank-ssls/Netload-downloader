@@ -20,11 +20,26 @@ import { BrowserManager } from '../utils/browserManager';
 import { BrowserProfiles, hostOf } from '../utils/browserProfiles';
 
 const SNAPSHOT_INTERVAL_MS = 3000;
+// Once a session looks established, keep capturing this long (post-login cookies
+// settle) then auto-finish — the user needn't manually close the window.
+const ESTABLISHED_GRACE_MS = 6000;
+
+// Cookie-name substrings that signal a logged-in / cleared session (PHPSESSID,
+// JSESSIONID, remember_token, auth_id, user_session, …).
+const AUTH_COOKIE_RE = /(sess|sid|token|auth|login|logged|remember|identity)/i;
+
+/** Does the cookie set look like an established session (logged in, or CF cleared)?
+ *  Pure — unit-tested. */
+export function looksEstablished(cookieNames: string[], _host?: string): boolean {
+  return cookieNames.some((n) => n === 'cf_clearance' || AUTH_COOKIE_RE.test(n));
+}
+
+export type LoginReason = 'session-captured' | 'window-closed' | 'timeout' | 'error';
 
 export interface LoginResult {
   host: string;
   saved: boolean;
-  reason: 'window-closed' | 'timeout' | 'error';
+  reason: LoginReason;
   cookies: number;
   durationMs: number;
 }
@@ -36,17 +51,11 @@ export function summarizeLogin(
   host: string,
   saved: boolean,
   cookieCount: number,
-  endedByClose: boolean,
+  reason: LoginReason,
   startedAt: number,
   now: number,
 ): LoginResult {
-  return {
-    host,
-    saved,
-    reason: endedByClose ? 'window-closed' : 'timeout',
-    cookies: cookieCount,
-    durationMs: now - startedAt,
-  };
+  return { host, saved, reason, cookies: cookieCount, durationMs: now - startedAt };
 }
 
 export class InteractiveLogin {
@@ -75,16 +84,32 @@ export class InteractiveLogin {
       const deadline = startedAt + timeoutMs;
       let lastCookies = 0;
       let savedAny = false;
+      let establishedAt = 0; // when a logged-in/cleared session was first detected
+      let autoFinished = false;
       while (!closed && Date.now() < deadline) {
         // Periodic snapshot — the latest good session survives an abrupt close.
         const state = await context.storageState().catch(() => null);
         if (state) {
           const wrote = await BrowserProfiles.save(context, url).catch(() => false);
           savedAny = savedAny || wrote;
-          lastCookies = state.cookies?.filter((c) => {
+          const cookies = (state.cookies || []).filter((c) => {
             const cd = (c.domain || '').replace(/^\./, '');
             return cd === host || cd.endsWith(host) || host.endsWith(cd);
-          }).length || lastCookies;
+          });
+          lastCookies = cookies.length || lastCookies;
+
+          // Auto-finish: once a session looks established, capture a short grace
+          // window (post-login cookies settle), then stop — no manual close needed.
+          if (looksEstablished((state.cookies || []).map((c) => c.name), host)) {
+            if (!establishedAt) {
+              establishedAt = Date.now();
+              logger.info({ host }, 'Interactive login: session detected — finishing shortly (you can close the window)');
+            } else if (Date.now() - establishedAt >= ESTABLISHED_GRACE_MS) {
+              savedAny = (await BrowserProfiles.save(context, url).catch(() => false)) || savedAny;
+              autoFinished = true;
+              break;
+            }
+          }
         }
         await new Promise((r) => setTimeout(r, SNAPSHOT_INTERVAL_MS));
       }
@@ -92,7 +117,8 @@ export class InteractiveLogin {
       // Final snapshot if the window is still open at the deadline.
       if (!closed) savedAny = (await BrowserProfiles.save(context, url).catch(() => false)) || savedAny;
 
-      const result = summarizeLogin(host, savedAny, lastCookies, closed, startedAt, Date.now());
+      const reason: LoginReason = autoFinished ? 'session-captured' : closed ? 'window-closed' : 'timeout';
+      const result = summarizeLogin(host, savedAny, lastCookies, reason, startedAt, Date.now());
       logger.info(result, 'Interactive login finished');
       return result;
     } finally {

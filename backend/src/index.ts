@@ -19,6 +19,7 @@ import { BrowserManager } from './utils/browserManager';
 import { PlaylistExpander } from './extractors/playlistExpander';
 import { Diagnostics } from './extractors/diagnostics';
 import { InteractiveLogin } from './recovery/interactiveLogin';
+import { BrowserProfiles } from './utils/browserProfiles';
 import { getBinaryVersions, safeUpdateYtdlp } from './utils/binaryVersions';
 import { YtdlpUpdater } from './utils/ytdlpUpdater';
 import { Metrics } from './utils/metrics';
@@ -106,6 +107,14 @@ app.post('/api/analyze', rateLimiter(config.rateLimitPerMin), async (req, res) =
 // Diagnose URL — open it headless and dump a full inspection report (every
 // request/response, player globals, MSE/Blob activity, iframe chain) plus
 // plain-language hints. For onboarding a NEW site that failed to download.
+// Saved per-host session profiles (A4): list + delete.
+app.get('/api/sessions', (_req, res) => {
+  res.json({ sessions: BrowserProfiles.list() });
+});
+app.delete('/api/sessions/:host', (req, res) => {
+  res.json({ removed: BrowserProfiles.remove(req.params.host) });
+});
+
 // Interactive login / manual challenge solve → persist a per-site session profile.
 app.post('/api/login', async (req, res) => {
   const { url } = req.body;

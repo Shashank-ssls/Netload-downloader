@@ -6,6 +6,8 @@
  *   netload batch <file>       download every URL in a file as one job
  *   netload corpus [path]      measure reach across a URL corpus (analyze only)
  *   netload onboard <url>      scaffold a site rule + corpus fixture for a new site
+ *   netload login <url>        sign in / clear a challenge once; saves the session
+ *   netload sessions           list saved logins; netload logout <host> to remove
  *
  * Requires the backend to be running (npm run dev / start). Set NETLOAD_API to
  * point at a non-default host (default http://127.0.0.1:4000).
@@ -19,6 +21,7 @@ import {
 } from './corpus/classify';
 import { suggestOnboarding, type DiagLike, type AnalyzeLike, type CorpusFixture } from './corpus/onboard';
 import type { SiteRule } from './providers/siteRules';
+import { suggestRemedy } from './utils/remedy';
 
 const API = process.env.NETLOAD_API || 'http://127.0.0.1:4000';
 
@@ -29,6 +32,7 @@ interface TaskView {
   path?: string;
   note?: string;
   error?: string;
+  url?: string;
 }
 
 function printHelp(): void {
@@ -39,6 +43,8 @@ netload diagnose <url>  inspect a (new/failing) site and report why it does/does
 netload onboard <url>   diagnose+analyze a new site, then scaffold a site rule + corpus fixture
                           --name "Label"   fixture/rule label    --write   append to local files
 netload login <url>     open a visible browser to sign in / solve a challenge once; saves the session
+netload sessions        list saved per-site logins (host, cookies, age)
+netload logout <host>   delete a saved login for a host
 
   --audio          audio only (mp3)
   --format <id>    specific format id (from analyze)
@@ -63,6 +69,8 @@ async function pollTask(id: string): Promise<void> {
     if (['completed', 'failed', 'cancelled'].includes(t.status)) {
       if (t.status === 'completed') console.log(`  -> ${t.path}${t.note ? `  [${t.note}]` : ''}`);
       if (t.status === 'failed') console.log(`  -> error: ${t.error}`);
+      const remedy = suggestRemedy(t);
+      if (remedy) console.log(`  -> ${remedy}`);
       return;
     }
     await new Promise((r) => setTimeout(r, 2000));
@@ -247,6 +255,8 @@ async function runBatch(args: string[]): Promise<void> {
         // Show the URL when the title never resolved (e.g. a task that failed early).
         const label = t.title && t.title !== 'Extracting...' ? t.title : t.url;
         console.log(`  ${mark}  ${label.slice(0, 48).padEnd(48)} ${detail}`);
+        const remedy = suggestRemedy(t);
+        if (remedy) console.log(`       ${remedy}`);
       }
       const ok = j.counts.completed || 0;
       const failed = j.counts.failed || 0;
@@ -446,6 +456,33 @@ async function runLogin(args: string[]): Promise<void> {
   }
 }
 
+async function runSessions(): Promise<void> {
+  let resp: Response;
+  try { resp = await fetch(`${API}/api/sessions`); }
+  catch { console.error(`error: cannot reach backend at ${API} — start it (npm run dev) first`); process.exit(1); }
+  const { sessions } = (await resp.json()) as { sessions: { host: string; cookies: number; origins: number; savedAt: number }[] };
+  if (!sessions.length) {
+    console.log('No saved sessions. Capture one with: netload login <url>');
+    return;
+  }
+  console.log(`  ${'HOST'.padEnd(28)}${'COOKIES'.padEnd(9)}${'STORAGE'.padEnd(9)}AGE`);
+  for (const s of sessions) {
+    const ageH = Math.max(0, Math.round((Date.now() - s.savedAt) / 3600000));
+    const age = ageH < 24 ? `${ageH}h` : `${Math.round(ageH / 24)}d`;
+    console.log(`  ${s.host.slice(0, 26).padEnd(28)}${String(s.cookies).padEnd(9)}${String(s.origins).padEnd(9)}${age}`);
+  }
+}
+
+async function runLogout(args: string[]): Promise<void> {
+  const host = args.find((a) => !a.startsWith('-'));
+  if (!host) { console.error('usage: netload logout <host>'); process.exit(1); }
+  let resp: Response;
+  try { resp = await fetch(`${API}/api/sessions/${encodeURIComponent(host)}`, { method: 'DELETE' }); }
+  catch { console.error(`error: cannot reach backend at ${API}`); process.exit(1); }
+  const { removed } = (await resp.json()) as { removed: boolean };
+  console.log(removed ? `removed saved session for ${host}` : `no saved session for ${host}`);
+}
+
 async function main(): Promise<void> {
   const argv = process.argv.slice(2);
   if (argv[0] === 'batch') {
@@ -466,6 +503,14 @@ async function main(): Promise<void> {
   }
   if (argv[0] === 'login') {
     await runLogin(argv.slice(1));
+    return;
+  }
+  if (argv[0] === 'sessions') {
+    await runSessions();
+    return;
+  }
+  if (argv[0] === 'logout') {
+    await runLogout(argv.slice(1));
     return;
   }
   if (argv.length === 0 || argv.includes('-h') || argv.includes('--help')) {
