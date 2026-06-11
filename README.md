@@ -4,6 +4,55 @@ Hardened **yt-dlp orchestration backend** for media extraction and download, wit
 browser-based fallback pipeline (Playwright) for sites yt-dlp can't handle natively —
 including generic **segmented-stream capture + stitching** for players that expose no manifest.
 
+## ⚠️ Disclaimer
+
+This project is provided for **educational and personal use only**. It orchestrates
+open-source tools (yt-dlp, ffmpeg) and a browser engine; it does **not** host, provide, or
+distribute any media itself.
+
+- **You alone are responsible** for how you use it and for complying with all applicable
+  laws and the Terms of Service of every website you access.
+- Only download content you own, have created, or otherwise have the explicit right to
+  download. Respect copyright holders.
+- This tool does **not** circumvent DRM — DRM-protected streams are detected and refused.
+- Provided **"AS IS", without warranty of any kind**. The authors accept no liability for
+  any misuse of, or any damage arising from, this software.
+
+By using this software you agree that you alone are responsible for your actions.
+
+## Get it running
+
+There are two ways to use NetLoad.
+
+### 1. Prebuilt app — no setup (for end users)
+
+Download the portable bundle (`netload-portable.zip`) from this repo's **Releases** page,
+right-click → **Extract All**, then double-click **`netload.exe`**. Paste a link at the
+`link>` prompt and the file lands in the `downloads\` folder next to the exe — nothing else
+to install. (Full steps are in the `README.txt` inside the bundle.)
+
+### 2. From source — for developers (Windows, run from a terminal)
+
+```powershell
+# Install Node.js 20+  (https://nodejs.org)  then, from the repo:
+cd backend
+npm install
+npm run download-binaries                      # fetches yt-dlp.exe + ffmpeg/ffprobe
+$env:PLAYWRIGHT_BROWSERS_PATH = "$PWD\playwright-browsers"
+npx playwright install chromium                # browser engine for the fallback path
+npm run build
+
+# One-shot download, no server needed:
+node dist/standalone.js "https://a-site/video"
+
+# …or build your own portable netload.exe:
+npm run package:exe                            # → backend/release/netload-portable/
+```
+
+You run it from a **terminal** (PowerShell, or the integrated terminal in VS Code — VS Code
+is just the editor; there is no special "run" button). The Express **server / API** mode
+described below is optional and meant for programmatic use.
+
 ## How universal is it?
 
 The core is **site-agnostic**; per-site lists are optimizations, not gates. An unknown site
@@ -35,9 +84,10 @@ ranking + interception.
 ## Setup
 
 ```powershell
-cd F:\Dev\myproject\Main_scrapper\main_main\netload-downloader\backend
+cd backend
 npm install
 npm run download-binaries   # fetches yt-dlp.exe + ffmpeg/ffprobe into the project
+npx playwright install chromium   # (set PLAYWRIGHT_BROWSERS_PATH=backend\playwright-browsers first)
 ```
 
 ## Running
@@ -71,7 +121,7 @@ Set `NETLOAD_API` to target a non-default host (default `http://127.0.0.1:4000`)
 ```powershell
 npm run typecheck    # tsc --noEmit
 npm run lint         # eslint
-npm test             # vitest (60 unit tests, no network/browser/db)
+npm test             # vitest (275 unit tests, no network/browser/db)
 npm run format       # prettier --write
 ```
 
