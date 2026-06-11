@@ -47,9 +47,9 @@ describe('deriveHints', () => {
     expect(hints.join(' ')).toMatch(/HLS manifest/i);
   });
 
-  it('flags DASH as detected-but-not-reassembled (roadmap #3)', () => {
+  it('flags DASH as downloadable via ffmpeg (roadmap #3)', () => {
     const hints = deriveHints(baseReport({ mediaRequests: [req({ mediaKind: 'dash' })] }));
-    expect(hints.join(' ')).toMatch(/DASH.*not yet implemented|roadmap #3/i);
+    expect(hints.join(' ')).toMatch(/DASH.*ffmpeg|roadmap #3/i);
   });
 
   it('flags MSE/appendBuffer with no network media as needing interception (roadmap #2)', () => {

@@ -96,7 +96,7 @@ export function deriveHints(r: Omit<DiagnosticReport, 'hints'>): string[] {
     hints.push('HLS manifest seen on the network — downloadable via the HLS engine. If the URL is opaque it is now caught by content-based capture.');
   }
   if (kinds.has('dash')) {
-    hints.push('DASH (.mpd) manifest seen — detected but DASH reassembly is not yet implemented (roadmap #3); a download will currently fall through.');
+    hints.push('DASH (.mpd) manifest seen — downloadable: ffmpeg reassembles it natively (roadmap #3), unless the manifest is DRM-protected.');
   }
   if (kinds.has('mp4') && !kinds.has('hls')) {
     hints.push('Progressive media response(s) seen — should download directly.');

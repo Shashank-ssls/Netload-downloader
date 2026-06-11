@@ -10,6 +10,7 @@ import { HeaderBuilder } from './utils/headers';
 import { FallbackExtractor, DURATION_FLOOR_SEC, BYTES_FLOOR } from './extractors/fallbackExtractor';
 import { SegmentStitcher } from './extractors/segmentStitcher';
 import { MseCapturer } from './extractors/mseCapture';
+import { DashDownloader } from './extractors/dashDownloader';
 import { CloudflareRecoveryManager } from './recovery/cloudflare';
 import { FileValidator } from './utils/validators';
 import { CookieResolver } from './utils/cookieResolver';
@@ -300,8 +301,13 @@ export async function downloadMedia(taskId: string, onProgress: (data: ProgressD
             }
           }
         }
-        candIdx++;
-        if (candIdx < candidates.length) {
+        // Advance through the ranked candidates. A DASH (.mpd) candidate is
+        // downloaded here via ffmpeg (roadmap #3) — ffmpeg reassembles DASH
+        // natively and more reliably than yt-dlp for opaque sites; on failure we
+        // keep advancing. A non-DASH candidate falls through to the yt-dlp spawn
+        // at the top of the loop (the existing path).
+        let handedToYtdlp = false;
+        while (++candIdx < candidates.length) {
           const c = candidates[candIdx];
           targetUrl = c.url;
           capturedHeaders = c.headers;
@@ -310,12 +316,47 @@ export async function downloadMedia(taskId: string, onProgress: (data: ProgressD
           // media by Content-Type/bytes) is a raw stream just like a URL-matched
           // one — feed it to yt-dlp as a direct fallback stream.
           isFallbackStream = isDirectStream(c.url) || !!c.mediaKind;
+
+          if (c.mediaKind === 'dash' || DashDownloader.isDashUrl(c.url)) {
+            logger.info({ taskId, candIdx, fallbackUrl: targetUrl }, 'DASH manifest candidate — downloading via ffmpeg');
+            tasks.update(taskId, { status: 'downloading', progress: 0 });
+            try {
+              const outPath = path.join(config.storagePath, `${taskId}.mp4`);
+              const dl = await DashDownloader.run(
+                c.url, c.headers, c.userAgent, c.magnitude?.durationSec || 0, outPath,
+                (data) => {
+                  tasks.update(taskId, { progress: data.progress, filesize: data.size, speed: data.speed, eta: data.eta });
+                  onProgress(data);
+                },
+              );
+              if (dl && FileValidator.isContentSane(dl.path, { minBytes: BYTES_FLOOR, minDurationSec: DURATION_FLOOR_SEC })) {
+                FileValidator.validate(dl.path);
+                tasks.update(taskId, {
+                  status: 'completed', progress: 100, path: dl.path,
+                  note: dl.partial ? 'PARTIAL_CAPTURE' : '',
+                });
+                return 'SUCCESS';
+              }
+              logger.warn({ taskId, dl }, 'DASH download missing/too small — trying next candidate');
+            } catch (e: any) {
+              if (e.message === 'DRM_PROTECTED') {
+                logger.error({ taskId }, 'DASH stream is DRM-protected — cannot download');
+                tasks.update(taskId, { status: 'failed', error: 'DRM_PROTECTED' });
+                throw new Error('DRM_PROTECTED');
+              }
+              logger.error({ taskId, err: e.message }, 'DASH ffmpeg download failed — trying next candidate');
+            }
+            continue; // DASH attempt didn't pan out — advance to the next candidate
+          }
+
           logger.info({ taskId, candIdx, fallbackUrl: targetUrl, candidateCount: candidates.length }, 'Trying fallback candidate');
-          await CloudflareRecoveryManager.waitCooldown(attempt);
-          continue;
+          handedToYtdlp = true;
+          break;
         }
 
-        logger.info({ taskId, candidateCount: candidates.length }, 'All fallback candidates exhausted');
+        if (!handedToYtdlp) {
+          logger.info({ taskId, candidateCount: candidates.length }, 'All fallback candidates exhausted');
+        }
         await CloudflareRecoveryManager.waitCooldown(attempt);
         continue;
       }
