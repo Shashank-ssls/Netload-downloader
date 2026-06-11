@@ -12,12 +12,13 @@ import { categorizeError, type ErrorCategory } from './errorCatalog';
 export interface ProviderStats {
   attempts: number;
   successes: number;
+  previews: number;                            // completed but gated (preview/placeholder)
   failures: number;
   byError: Record<string, number>;
 }
 
 export interface ProviderSnapshot extends ProviderStats {
-  successRate: number;                         // 0..1, rounded to 3dp
+  successRate: number;                         // 0..1, rounded to 3dp (full successes only)
   byCategory: Partial<Record<ErrorCategory, number>>;
 }
 
@@ -26,13 +27,20 @@ export class Metrics {
 
   private static get(provider: string): ProviderStats {
     let s = this.byProvider.get(provider);
-    if (!s) { s = { attempts: 0, successes: 0, failures: 0, byError: {} }; this.byProvider.set(provider, s); }
+    if (!s) { s = { attempts: 0, successes: 0, previews: 0, failures: 0, byError: {} }; this.byProvider.set(provider, s); }
     return s;
   }
 
   static recordSuccess(provider: string): void {
     const s = this.get(provider);
     s.attempts++; s.successes++;
+  }
+
+  /** A completion that's only a gated preview/placeholder — counts as an attempt
+   *  but NOT a full success, so the success rate reflects real reach. */
+  static recordPreview(provider: string): void {
+    const s = this.get(provider);
+    s.attempts++; s.previews++;
   }
 
   static recordFailure(provider: string, errorCode: string): void {

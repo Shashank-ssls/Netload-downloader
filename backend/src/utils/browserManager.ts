@@ -29,7 +29,7 @@ import StealthPlugin from 'puppeteer-extra-plugin-stealth';
 
 stealthChromium.use(StealthPlugin());
 
-import type { Browser, BrowserContext } from 'playwright-core';
+import type { Browser, BrowserContext, Page } from 'playwright-core';
 import type { CapturedStream } from '../types';
 
 export { CapturedStream };
@@ -138,6 +138,41 @@ export class BrowserManager {
       contextsMax: this.contextLimiter.capacity,
       contextsWaiting: this.contextLimiter.waiting,
     };
+  }
+
+  /**
+   * Launch a one-off HEADED (visible) browser + context for an interactive login
+   * / manual challenge solve (A4 capstone). Separate from the shared headless
+   * browser and NOT gated by the context semaphore (it's user-driven, not a
+   * download worker). Seeds from any saved session profile so a partial login is
+   * resumed. The caller MUST close the returned browser when done.
+   */
+  static async launchHeadedContext(url?: string): Promise<{ browser: Browser; context: BrowserContext; page: Page }> {
+    const storageState = url ? BrowserProfiles.storageStateOption(url) : undefined;
+    logger.info({ url, resumed: !!storageState }, 'Launching headed browser for interactive login');
+
+    const browser = await stealthChromium.launch({
+      headless: false,
+      executablePath: playwrightChromium.executablePath(),
+      args: [
+        '--no-sandbox',
+        '--disable-setuid-sandbox',
+        '--disable-blink-features=AutomationControlled',
+        '--disable-dev-shm-usage',
+        '--disable-features=IsolateOrigins,site-per-process',
+        '--window-size=1280,860',
+        '--lang=en-US,en',
+      ],
+    });
+    const context = await browser.newContext({
+      viewport: null, // real window size
+      userAgent: 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36',
+      locale: 'en-US',
+      timezoneId: 'America/New_York',
+      ...(storageState ? { storageState } : {}),
+    });
+    const page = await context.newPage();
+    return { browser, context, page };
   }
 
   static async shutdown(): Promise<void> {

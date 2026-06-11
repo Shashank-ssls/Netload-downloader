@@ -44,4 +44,12 @@ describe('Metrics', () => {
     expect(snap.movie.successRate).toBe(1);
     expect(snap.anime).toBeUndefined();
   });
+
+  it('counts a gated preview as an attempt but NOT a full success', () => {
+    Metrics.recordSuccess('hanime');
+    Metrics.recordPreview('hanime');
+    const h = Metrics.snapshot().hanime;
+    expect(h).toMatchObject({ attempts: 2, successes: 1, previews: 1, failures: 0 });
+    expect(h.successRate).toBe(0.5); // preview drags the real-reach rate down
+  });
 });

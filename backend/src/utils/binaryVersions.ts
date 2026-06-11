@@ -17,10 +17,16 @@ export interface BinaryVersions {
 
 let cached: BinaryVersions | null = null;
 
-/** yt-dlp + ffmpeg versions, probed once and cached (cleared after a self-update). */
+/**
+ * yt-dlp + ffmpeg versions, cached after a SUCCESSFUL probe (cleared after a
+ * self-update). A transient first-probe failure (e.g. a binary momentarily busy
+ * at startup) is NOT cached as 'unknown' — each field is re-probed until it
+ * resolves, so health stops showing a stale 'unknown' once the binary responds.
+ */
 export function getBinaryVersions(): BinaryVersions {
-  if (cached) return cached;
-  cached = { ytdlp: probeYtdlp(), ffmpeg: probeFfmpeg() };
+  if (!cached) cached = { ytdlp: 'unknown', ffmpeg: 'unknown' };
+  if (cached.ytdlp === 'unknown') cached.ytdlp = probeYtdlp();
+  if (cached.ffmpeg === 'unknown') cached.ffmpeg = probeFfmpeg();
   return cached;
 }
 

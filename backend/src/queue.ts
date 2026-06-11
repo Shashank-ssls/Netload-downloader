@@ -54,8 +54,13 @@ export class QueueManager {
     const final = tasks.getById(task.id);
     if (!final) return;
     const provider = ProviderDetector.detect(task.url).name;
-    if (final.status === 'completed') Metrics.recordSuccess(provider);
-    else if (final.status === 'failed') Metrics.recordFailure(provider, final.error || 'UNKNOWN_ERROR');
+    if (final.status === 'completed') {
+      // A gated preview ("best we could get anonymously") isn't a full success.
+      if (final.note === 'LIKELY_PREVIEW_ADD_COOKIES') Metrics.recordPreview(provider);
+      else Metrics.recordSuccess(provider);
+    } else if (final.status === 'failed') {
+      Metrics.recordFailure(provider, final.error || 'UNKNOWN_ERROR');
+    }
     // paused / cancelled / still-queued → not a terminal outcome; don't count.
   }
 

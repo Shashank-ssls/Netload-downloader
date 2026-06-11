@@ -38,6 +38,7 @@ netload corpus [path]   measure reach across a URL corpus (analyze only)
 netload diagnose <url>  inspect a (new/failing) site and report why it does/doesn't work
 netload onboard <url>   diagnose+analyze a new site, then scaffold a site rule + corpus fixture
                           --name "Label"   fixture/rule label    --write   append to local files
+netload login <url>     open a visible browser to sign in / solve a challenge once; saves the session
 
   --audio          audio only (mp3)
   --format <id>    specific format id (from analyze)
@@ -410,6 +411,41 @@ async function runOnboard(args: string[]): Promise<void> {
   console.log('');
 }
 
+async function runLogin(args: string[]): Promise<void> {
+  const url = args.find((a) => !a.startsWith('-'));
+  if (!url) {
+    console.error('usage: netload login <url>');
+    process.exit(1);
+  }
+  try { await fetch(`${API}/api/health`); }
+  catch { console.error(`error: cannot reach backend at ${API} — start it (npm run dev) first`); process.exit(1); }
+
+  console.log(`\nOpening a visible browser for ${url}.`);
+  console.log('  → Sign in / solve any challenge, then CLOSE the window. The session is captured for next time.\n');
+
+  let resp: Response;
+  try {
+    resp = await fetch(`${API}/api/login`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ url }),
+    });
+  } catch {
+    console.error(`error: cannot reach backend at ${API}`);
+    process.exit(1);
+  }
+  if (!resp.ok) {
+    console.error(`error: ${resp.status} ${await resp.text()}`);
+    process.exit(1);
+  }
+  const r = (await resp.json()) as { host: string; saved: boolean; cookies: number; reason: string };
+  if (r.saved) {
+    console.log(`  saved session for ${r.host} (${r.cookies} cookies, ended: ${r.reason}). Downloads for this host will reuse it.`);
+  } else {
+    console.log(`  no session captured (${r.reason}) — nothing was signed in, or the window closed before any cookies were set.`);
+  }
+}
+
 async function main(): Promise<void> {
   const argv = process.argv.slice(2);
   if (argv[0] === 'batch') {
@@ -426,6 +462,10 @@ async function main(): Promise<void> {
   }
   if (argv[0] === 'onboard') {
     await runOnboard(argv.slice(1));
+    return;
+  }
+  if (argv[0] === 'login') {
+    await runLogin(argv.slice(1));
     return;
   }
   if (argv.length === 0 || argv.includes('-h') || argv.includes('--help')) {

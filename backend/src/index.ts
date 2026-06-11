@@ -18,6 +18,7 @@ import { YTDLPProcessManager } from './yt-dlp';
 import { BrowserManager } from './utils/browserManager';
 import { PlaylistExpander } from './extractors/playlistExpander';
 import { Diagnostics } from './extractors/diagnostics';
+import { InteractiveLogin } from './recovery/interactiveLogin';
 import { getBinaryVersions, safeUpdateYtdlp } from './utils/binaryVersions';
 import { YtdlpUpdater } from './utils/ytdlpUpdater';
 import { Metrics } from './utils/metrics';
@@ -105,6 +106,30 @@ app.post('/api/analyze', rateLimiter(config.rateLimitPerMin), async (req, res) =
 // Diagnose URL — open it headless and dump a full inspection report (every
 // request/response, player globals, MSE/Blob activity, iframe chain) plus
 // plain-language hints. For onboarding a NEW site that failed to download.
+// Interactive login / manual challenge solve → persist a per-site session profile.
+app.post('/api/login', async (req, res) => {
+  const { url } = req.body;
+  if (!url || typeof url !== 'string') {
+    return res.status(400).json({ error: 'URL required' });
+  }
+  try {
+    const parsed = new URL(url);
+    if (!['http:', 'https:'].includes(parsed.protocol)) {
+      return res.status(400).json({ error: 'Only HTTP/HTTPS URLs are supported' });
+    }
+    SsrfGuard.assertSafe(url);
+  } catch (e: any) {
+    const msg = e?.message === 'BLOCKED_PRIVATE_URL' ? 'Private/loopback URLs are not allowed' : 'Invalid URL';
+    return res.status(400).json({ error: msg });
+  }
+  try {
+    res.json(await InteractiveLogin.run(url));
+  } catch (err: any) {
+    logger.error({ url, err: err.message }, 'Interactive login failed');
+    res.status(500).json({ error: err.message });
+  }
+});
+
 app.post('/api/diagnose', rateLimiter(config.rateLimitPerMin), async (req, res) => {
   const { url } = req.body;
   if (!url || typeof url !== 'string') {

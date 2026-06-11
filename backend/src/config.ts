@@ -66,6 +66,9 @@ export const config = {
   // Turnstile/hCaptcha/reCAPTCHA. Empty = no hook (rely on stealth auto-solve).
   captchaSolverCmd: process.env.CAPTCHA_SOLVER_CMD || '',
   captchaSolverTimeoutMs: Math.max(5, parseInt(process.env.CAPTCHA_SOLVER_TIMEOUT_SEC || '120', 10)) * 1000,
+
+  // How long the interactive-login window stays open to capture a session profile.
+  interactiveLoginTimeoutMs: Math.max(30, parseInt(process.env.INTERACTIVE_LOGIN_TIMEOUT_SEC || '300', 10)) * 1000,
   logPath: path.resolve(process.env.LOG_PATH || './logs'),
 };
 
