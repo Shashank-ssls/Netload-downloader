@@ -2,6 +2,9 @@
 backend/node_modules/
 backend/dist/
 
+# Portable executable bundle (built by scripts/package.ps1 — ~1GB, regenerable)
+backend/release/
+
 # Playwright Chromium (large binary, re-installed via setup script)
 backend/playwright-browsers/
 

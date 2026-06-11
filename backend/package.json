@@ -22,6 +22,7 @@
     "lint": "eslint \"src/**/*.ts\" \"test/**/*.ts\"",
     "format": "prettier --write \"src/**/*.ts\" \"test/**/*.ts\"",
     "format:check": "prettier --check \"src/**/*.ts\" \"test/**/*.ts\"",
+    "package:exe": "powershell -ExecutionPolicy Bypass -File scripts/package.ps1",
     "download-binaries": "powershell -ExecutionPolicy Bypass -File scripts/download-binaries.ps1",
     "create-venv": "powershell -ExecutionPolicy Bypass -File scripts/create-venv.ps1",
     "install-deps": "powershell -ExecutionPolicy Bypass -File scripts/install-backend.ps1"
