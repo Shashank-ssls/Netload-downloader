@@ -85,19 +85,24 @@ writing). Ordered roughly by leverage.
 
 ---
 
-## Smaller / opportunistic
+## Smaller / opportunistic  ✅ ALL DONE (commit 19a5ae4)
 
-- **Master-playlist variant follow:** `parsePlaylist` (`segmentStitcher.ts`) skips master
-  playlists (no `#EXTINF`). Reuse the existing `pickBestVariant` (in `fallbackExtractor.ts`) to
-  resolve a master → highest-bandwidth media playlist when only a master is intercepted.
-- **Impersonation escalation in recovery:** R5 added inferred self-referer
-  (`providers/inference.ts`). Extend it to cycle impersonation targets (`chrome`/`safari`/
-  `firefox`) on persistent 403s, not just a fixed provider choice.
-- **Interactive cookie harvesting:** reuse the stealth browser's cookies after a one-time login so
-  gated new sites work without hand-exporting `cookies.txt` (pairs with the per-site cookie
-  resolver already in `utils/cookieResolver.ts`). Higher complexity — only if gated sites bite.
-- **Lean on yt-dlp's generic extractor** as an intermediate tier (pass captured headers/cookies
-  into a yt-dlp generic attempt) before launching Chromium — cheaper, sometimes sufficient.
+- **Master-playlist variant follow:** ✅ `segmentStitcher.ts`'s in-page playlist intercept now
+  reuses `FallbackExtractor.pickBestVariant` (made public) to follow a captured master →
+  highest-bandwidth media playlist (fetched with the player's headers, normalized against the
+  variant's base).
+- **Impersonation escalation in recovery:** ✅ `CloudflareRecoveryManager.cycleImpersonateTarget`
+  rotates `--impersonate` through `chrome`/`safari`/`edge` on retries instead of a fixed target.
+- **Interactive cookie harvesting:** ✅ `utils/cookieHarvester.ts` persists the stealth context's
+  cookies as a per-site Netscape `cookies.txt` after Tier 2 render (never clobbers an existing
+  file); `CookieResolver` then reuses them. (The one-time *interactive login* UX is not built —
+  this is the automatic harvest-after-render mechanism.)
+- **Lean on yt-dlp's generic extractor:** ✅ a non-generic provider whose dedicated extractor fails
+  gets one cheap `--force-generic-extractor` run (with the player's headers + impersonation) BEFORE
+  Chromium (`genericExtractorArgs`, gated once).
+
+Everything in this roadmap is now implemented. Further work is reactive — driven by real corpus
+failures (`npm run corpus`).
 
 ---
 
