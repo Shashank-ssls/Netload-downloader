@@ -69,6 +69,14 @@ export const config = {
 
   // How long the interactive-login window stays open to capture a session profile.
   interactiveLoginTimeoutMs: Math.max(30, parseInt(process.env.INTERACTIVE_LOGIN_TIMEOUT_SEC || '300', 10)) * 1000,
+
+  // Optional FlareSolverr endpoint (a local proxy that drives an undetected
+  // browser to clear Cloudflare Turnstile/managed challenges the stealth Chromium
+  // can't pass). Empty = disabled. When set, it's the last-resort CF recovery step:
+  // POST <url>/v1 {cmd:'request.get', url, maxTimeout} → {solution:{cookies,userAgent}}.
+  // Default points at FlareSolverr's standard local port; left empty so it's opt-in.
+  flaresolverrUrl: process.env.FLARESOLVERR_URL || '',
+  flaresolverrTimeoutMs: Math.max(10, parseInt(process.env.FLARESOLVERR_TIMEOUT_SEC || '60', 10)) * 1000,
   logPath: path.resolve(process.env.LOG_PATH || './logs'),
 };
 

@@ -14,6 +14,7 @@ import logger from '../logger';
 import { BrowserManager } from '../utils/browserManager';
 import { BrowserHelpers } from '../utils/browserHelpers';
 import { BrowserProfiles } from '../utils/browserProfiles';
+import { FlareSolverr } from './flaresolverr';
 
 export interface CloudflareTokens {
   cfClearance: string;
@@ -85,9 +86,18 @@ export class CloudflareRecoveryManager {
    */
   static async harvestAndInject(url: string, headers: Record<string, string>): Promise<string | null> {
     const tokens = await this.harvestClearance(url);
-    if (!tokens) return null;
-    headers['Cookie'] = `cf_clearance=${tokens.cfClearance}`;
-    return tokens.userAgent;
+    if (tokens) {
+      headers['Cookie'] = `cf_clearance=${tokens.cfClearance}`;
+      return tokens.userAgent;
+    }
+    // Stealth Chromium couldn't clear it (e.g. a Turnstile managed challenge that
+    // fingerprint-blocks Playwright). Fall back to FlareSolverr's undetected browser
+    // if one is configured — it injects its own scoped Cookie header + matched UA.
+    if (FlareSolverr.enabled) {
+      logger.info({ url }, 'Stealth CF harvest failed — falling back to FlareSolverr');
+      return FlareSolverr.harvestAndInject(url, headers);
+    }
+    return null;
   }
 
   static buildCFArgs(tokens: CloudflareTokens): string[] {

@@ -123,7 +123,10 @@ export function deriveHints(r: Omit<DiagnosticReport, 'hints'>): string[] {
   const challenge = detectChallengeType('', r.page.iframeChain);
   if (challenge === 'turnstile' || challenge === 'hcaptcha' || challenge === 'recaptcha') {
     const nice = challenge === 'turnstile' ? 'Cloudflare Turnstile' : challenge === 'hcaptcha' ? 'hCaptcha' : 'reCAPTCHA';
-    hints.push(`${nice} interactive captcha is blocking the page — solve it ONCE with \`netload login <url>\` (the cleared session is reused), or configure CAPTCHA_SOLVER_CMD.`);
+    const flare = challenge === 'turnstile'
+      ? ' For a Turnstile managed challenge that even a headed browser cannot pass, set FLARESOLVERR_URL — its undetected browser clears it automatically on retry.'
+      : '';
+    hints.push(`${nice} interactive captcha is blocking the page — solve it ONCE with \`netload login <url>\` (the cleared session is reused), or configure CAPTCHA_SOLVER_CMD.${flare}`);
   } else if (media.length === 0 && r.page.appendBufferCount === 0 && !blobVideo) {
     hints.push('No media detected at all — the site may require login/cookies, a different interaction, or render the player behind an embed we did not follow.');
   }

@@ -28,7 +28,7 @@ export function suggestRemedy(task: SettledTask): string | null {
     return `Gated preview — run: netload login ${host}   (or add cookies/${host}.txt) for the full video`;
   }
   if (task.error === 'CLOUDFLARE_BLOCKED') {
-    return `Cloudflare blocked — run: netload login ${host}   to clear it once (then it's reused)`;
+    return `Cloudflare blocked — run: netload login ${host}   to clear it once (then it's reused), or set FLARESOLVERR_URL to clear Turnstile automatically`;
   }
   if (task.error === 'DRM_PROTECTED') {
     return 'DRM-protected — cannot be downloaded';

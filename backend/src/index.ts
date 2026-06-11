@@ -66,6 +66,10 @@ app.get('/api/health', (_req, res) => {
     hosts: HostThrottle.stats(),
     providerMetrics: Metrics.snapshot(),
     tasks: tasks.statusCounts(),
+    recovery: {
+      captchaSolver: !!config.captchaSolverCmd,
+      flaresolverr: !!config.flaresolverrUrl,
+    },
   });
 });
 

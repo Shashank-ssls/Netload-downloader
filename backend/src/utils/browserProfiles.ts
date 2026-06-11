@@ -105,10 +105,25 @@ export class BrowserProfiles {
    */
   static async save(context: BrowserContext, url: string): Promise<boolean> {
     try {
+      const raw = (await context.storageState()) as StorageState;
+      return this.saveState(url, raw);
+    } catch (err: any) {
+      logger.warn({ err: err.message }, 'Saving browser profile failed (continuing)');
+      return false;
+    }
+  }
+
+  /**
+   * Save an already-materialised storageState for `url`'s host (cookies scoped to
+   * the site). Used when the session was obtained outside Playwright (e.g. a
+   * FlareSolverr clearance), so there's no live context to read from. Returns true
+   * if a meaningful profile was written. Best-effort: never throws into the caller.
+   */
+  static saveState(url: string, raw: StorageState): boolean {
+    try {
       const file = this.pathFor(url);
       if (!file) return false;
       const host = hostOf(url);
-      const raw = (await context.storageState()) as StorageState;
       const scoped = filterStorageState(raw, host);
       if (!isMeaningfulState(scoped)) return false;
 
