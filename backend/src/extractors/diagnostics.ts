@@ -108,12 +108,12 @@ export function deriveHints(r: Omit<DiagnosticReport, 'hints'>): string[] {
   if (r.page.appendBufferCount > 0) {
     const detail = r.page.sourceBufferMimes.length ? ` (mimes: ${r.page.sourceBufferMimes.join(', ')})` : '';
     if (media.length === 0) {
-      hints.push(`MSE/appendBuffer in use${detail} but no media URLs on the network — the player decrypts/feeds segments in JS straight to the <video>. Needs SourceBuffer interception (roadmap #2).`);
+      hints.push(`MSE/appendBuffer in use${detail} but no media URLs on the network — the player feeds bytes straight to the <video>. Handled by MSE/appendBuffer capture (roadmap #2), unless the stream is EME/DRM-protected.`);
     } else {
       hints.push(`MSE/appendBuffer in use${detail}; media was also seen on the network.`);
     }
   } else if (blobVideo && media.length === 0) {
-    hints.push('The <video> src is a blob: with no media on the network — content is delivered via MSE/Blob; needs in-page interception (roadmap #2).');
+    hints.push('The <video> src is a blob: with no media on the network — content is delivered via MSE/Blob; handled by MSE/appendBuffer capture (roadmap #2).');
   }
 
   if (media.length === 0 && r.page.appendBufferCount === 0 && !blobVideo) {

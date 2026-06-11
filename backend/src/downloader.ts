@@ -9,6 +9,7 @@ import { inferRecoveryHeaders } from './providers/inference';
 import { HeaderBuilder } from './utils/headers';
 import { FallbackExtractor, DURATION_FLOOR_SEC, BYTES_FLOOR } from './extractors/fallbackExtractor';
 import { SegmentStitcher } from './extractors/segmentStitcher';
+import { MseCapturer } from './extractors/mseCapture';
 import { CloudflareRecoveryManager } from './recovery/cloudflare';
 import { FileValidator } from './utils/validators';
 import { CookieResolver } from './utils/cookieResolver';
@@ -56,6 +57,8 @@ export async function downloadMedia(taskId: string, onProgress: (data: ProgressD
   // Set once we detect a segmented stream, so a final failure reports a precise
   // cause instead of a generic MAX_RETRIES_EXCEEDED.
   let segmentedDetected = false;
+  // Set once we attempt an MSE/appendBuffer capture, for the same reason.
+  let mseDetected = false;
 
   // Fail fast if the storage drive is nearly full (before pulling a large file).
   const freeMB = FileValidator.getFreeSpaceMB(config.storagePath);
@@ -262,6 +265,40 @@ export async function downloadMedia(taskId: string, onProgress: (data: ProgressD
               logger.error({ taskId, err: e.message }, 'Segment stitching failed — falling back to candidate walk');
             }
           }
+
+          // MSE/appendBuffer capture (roadmap #2): no segment run AND no media URL
+          // on the network at all is the signature of "video plays but nothing
+          // downloads" — the player feeds decrypted bytes straight to <video> via
+          // SourceBuffer.appendBuffer. Re-open the page, intercept those buffers,
+          // and mux them. Attempted once, only when there's nothing else to try.
+          if (!segPrefix && candidates.length === 0) {
+            mseDetected = true;
+            logger.info({ taskId }, 'No network media found — attempting MSE/appendBuffer capture');
+            tasks.update(taskId, { status: 'downloading', progress: 0 });
+            try {
+              const outPath = path.join(config.storagePath, `${taskId}.mp4`);
+              const captured = await MseCapturer.run(task.url, outPath, (data) => {
+                tasks.update(taskId, { progress: data.progress, filesize: data.size, speed: data.speed, eta: data.eta });
+                onProgress(data);
+              });
+              if (captured && FileValidator.isContentSane(captured.path, { minBytes: BYTES_FLOOR, minDurationSec: DURATION_FLOOR_SEC })) {
+                FileValidator.validate(captured.path);
+                tasks.update(taskId, {
+                  status: 'completed', progress: 100, path: captured.path,
+                  note: captured.partial ? 'PARTIAL_CAPTURE' : '',
+                });
+                return 'SUCCESS';
+              }
+              logger.warn({ taskId, captured }, 'MSE capture produced nothing usable — falling back');
+            } catch (e: any) {
+              if (e.message === 'DRM_PROTECTED') {
+                logger.error({ taskId }, 'MSE stream is DRM-protected — cannot download');
+                tasks.update(taskId, { status: 'failed', error: 'DRM_PROTECTED' });
+                throw new Error('DRM_PROTECTED');
+              }
+              logger.error({ taskId, err: e.message }, 'MSE capture failed — falling back to candidate walk');
+            }
+          }
         }
         candIdx++;
         if (candIdx < candidates.length) {
@@ -288,7 +325,9 @@ export async function downloadMedia(taskId: string, onProgress: (data: ProgressD
     }
   }
 
-  const finalError = segmentedDetected ? 'SEGMENTED_STREAM_UNRESOLVED' : 'MAX_RETRIES_EXCEEDED';
+  const finalError = segmentedDetected ? 'SEGMENTED_STREAM_UNRESOLVED'
+    : mseDetected ? 'MSE_STREAM_UNRESOLVED'
+    : 'MAX_RETRIES_EXCEEDED';
   tasks.update(taskId, { status: 'failed', error: finalError });
   throw new Error(finalError);
 }

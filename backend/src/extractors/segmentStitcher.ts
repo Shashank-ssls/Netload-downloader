@@ -476,7 +476,7 @@ export class SegmentStitcher {
   }
 
   /** One initial pass clicking known play buttons across every frame. */
-  private static async clickPlay(page: Page): Promise<void> {
+  static async clickPlay(page: Page): Promise<void> {
     for (const frame of page.frames()) {
       for (const sel of PLAY_BUTTON_SELECTORS) {
         try {
@@ -493,7 +493,7 @@ export class SegmentStitcher {
    * seek a hair PAST the frontier to kick a stalled player into loading the next
    * segment. Returns the state of the first <video> found.
    */
-  private static async driveAndProbe(
+  static async driveAndProbe(
     page: Page,
     nudge: boolean,
   ): Promise<{ currentTime: number; duration: number; ended: boolean } | null> {
@@ -589,7 +589,7 @@ export class SegmentStitcher {
   }
 
   /** Spawn ffmpeg, parsing `time=` from stderr into download progress (0–99%). */
-  private static runFfmpeg(
+  static runFfmpeg(
     ffmpeg: string,
     args: string[],
     durationSec: number,
