@@ -23,6 +23,7 @@ import logger from '../logger';
 import { BrowserManager } from '../utils/browserManager';
 import { BrowserHelpers } from '../utils/browserHelpers';
 import { classifyContentType, classifyBytes, type MediaKind } from './mediaSignature';
+import { detectChallengeType } from '../recovery/captcha';
 import type { Page, Response as PlaywrightResponse } from 'playwright-core';
 
 const DIAG_RESOURCE_TYPES = ['xhr', 'fetch', 'media', 'other', 'document'];
@@ -116,7 +117,14 @@ export function deriveHints(r: Omit<DiagnosticReport, 'hints'>): string[] {
     hints.push('The <video> src is a blob: with no media on the network — content is delivered via MSE/Blob; handled by MSE/appendBuffer capture (roadmap #2).');
   }
 
-  if (media.length === 0 && r.page.appendBufferCount === 0 && !blobVideo) {
+  // Interactive captcha wall (Cloudflare Turnstile / hCaptcha / reCAPTCHA): the
+  // headless browser is stuck at the challenge, so no media ever loads. Call it out
+  // explicitly with the remedy — it can't be auto-solved.
+  const challenge = detectChallengeType('', r.page.iframeChain);
+  if (challenge === 'turnstile' || challenge === 'hcaptcha' || challenge === 'recaptcha') {
+    const nice = challenge === 'turnstile' ? 'Cloudflare Turnstile' : challenge === 'hcaptcha' ? 'hCaptcha' : 'reCAPTCHA';
+    hints.push(`${nice} interactive captcha is blocking the page — solve it ONCE with \`netload login <url>\` (the cleared session is reused), or configure CAPTCHA_SOLVER_CMD.`);
+  } else if (media.length === 0 && r.page.appendBufferCount === 0 && !blobVideo) {
     hints.push('No media detected at all — the site may require login/cookies, a different interaction, or render the player behind an embed we did not follow.');
   }
   if (r.page.playerGlobals.length) {

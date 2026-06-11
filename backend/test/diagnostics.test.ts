@@ -47,6 +47,15 @@ describe('deriveHints', () => {
     expect(hints.join(' ')).toMatch(/HLS manifest/i);
   });
 
+  it('flags a Cloudflare Turnstile iframe and points at netload login (the yoyomovies case)', () => {
+    const page = { ...emptyPage(), iframeChain: ['https://challenges.cloudflare.com/cdn-cgi/challenge-platform/h/g/turnstile/f/ov2/...'] };
+    const hints = deriveHints(baseReport({ page }));
+    const joined = hints.join(' ');
+    expect(joined).toMatch(/Cloudflare Turnstile/i);
+    expect(joined).toMatch(/netload login/);
+    expect(joined).not.toMatch(/No media detected at all/); // challenge hint replaces the generic one
+  });
+
   it('flags DASH as downloadable via ffmpeg (roadmap #3)', () => {
     const hints = deriveHints(baseReport({ mediaRequests: [req({ mediaKind: 'dash' })] }));
     expect(hints.join(' ')).toMatch(/DASH.*ffmpeg|roadmap #3/i);
