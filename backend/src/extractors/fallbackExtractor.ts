@@ -120,6 +120,29 @@ function hostnameMatchesEmbedder(url: string): boolean {
   }
 }
 
+// Well-known in-page player libraries. A frame exposing any of these globals is a
+// video player regardless of its domain — the structural counterpart to the
+// hostname allowlist above (roadmap #6).
+export const PLAYER_GLOBALS = [
+  'jwplayer', 'videojs', 'Hls', 'dashjs', 'Plyr', 'shaka', 'flowplayer', 'clappr',
+];
+
+export interface FramePlayerFacts {
+  hasVideo: boolean;
+  playerGlobals: string[];
+}
+
+/**
+ * Decide — by STRUCTURE, not domain — whether a frame is a video-player frame:
+ * it contains a `<video>` element or exposes a known player library global.
+ * (Network "stream traffic" is the third signal, but Tier 2 already captures that
+ * page-wide, so a frame emitting a real stream is handled by the network path.)
+ * Pure, so it's unit-tested directly.
+ */
+export function looksLikePlayerFrame(f: FramePlayerFacts): boolean {
+  return f.hasVideo || f.playerGlobals.length > 0;
+}
+
 export class FallbackExtractor {
 
   static async extractMediaUrl(url: string, providerType: string): Promise<CapturedStream | null> {
@@ -500,7 +523,15 @@ export class FallbackExtractor {
       const captured = await capturePromise;
       stop.value = true;
       await driver;
-      if (captured.length > 0) return captured;
+
+      // Structural player-frame detection (#6): an unknown embedder we followed
+      // may expose a <video> or a known player global without a network stream we
+      // could capture (a yt-dlp-supported host, a child-frame <video>, or blob/MSE
+      // delivery). Inspect every child frame by structure — domain-independent —
+      // and add such frames as candidates so the downstream extractors get a shot.
+      const playerFrames = await this.collectPlayerFrameCandidates(page, url).catch(() => []);
+      const merged = this.mergeCandidates(captured, playerFrames);
+      if (merged.length > 0) return merged;
 
       const domVideoUrl = await page.evaluate(() => {
         const v = document.querySelector('video');
@@ -568,6 +599,62 @@ export class FallbackExtractor {
 
       await page.waitForTimeout(2500).catch(() => {});
     }
+  }
+
+  /**
+   * Inspect every child frame structurally (roadmap #6) and return a candidate for
+   * each one that looks like a player — by a `<video>` element or a known player
+   * global, not by hostname. A frame's own `<video>` http src is captured directly
+   * (better than the embed URL); otherwise the frame's document URL is added so
+   * yt-dlp's extractors (incl. the generic one) can try the unknown embedder.
+   * Cross-origin child frames are fine: Playwright evaluates per-frame.
+   */
+  private static async collectPlayerFrameCandidates(page: Page, pageUrl: string): Promise<CapturedStream[]> {
+    const DEFAULT_UA = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36';
+    const out: CapturedStream[] = [];
+    const main = page.mainFrame();
+
+    for (const frame of page.frames()) {
+      if (frame === main) continue;
+      const frameUrl = frame.url();
+      if (!frameUrl.startsWith('http')) continue;
+
+      let facts: { hasVideo: boolean; videoSrc: string; playerGlobals: string[] } | null = null;
+      try {
+        facts = await frame.evaluate((globals) => {
+          const v = document.querySelector('video') as HTMLVideoElement | null;
+          const w = window as unknown as Record<string, unknown>;
+          return {
+            hasVideo: !!v,
+            videoSrc: v ? (v.currentSrc || v.getAttribute('src') || '') : '',
+            playerGlobals: globals.filter((g) => typeof w[g] !== 'undefined'),
+          };
+        }, PLAYER_GLOBALS);
+      } catch { continue; /* detached / not yet navigated */ }
+
+      if (!facts || !looksLikePlayerFrame(facts)) continue;
+
+      if (facts.videoSrc && facts.videoSrc.startsWith('http')) {
+        logger.info({ frameUrl, videoSrc: facts.videoSrc }, 'Tier 2: Structural player frame — captured <video> src');
+        out.push(this.buildStream(facts.videoSrc, pageUrl, DEFAULT_UA));
+      } else {
+        logger.info({ frameUrl, globals: facts.playerGlobals, hasVideo: facts.hasVideo }, 'Tier 2: Structural player frame — adding frame URL candidate');
+        out.push(this.buildStream(frameUrl, pageUrl, DEFAULT_UA));
+      }
+    }
+    return out;
+  }
+
+  /** Concatenate two candidate lists, dropping any whose URL is already present. */
+  static mergeCandidates(primary: CapturedStream[], extra: CapturedStream[]): CapturedStream[] {
+    const seen = new Set(primary.map((c) => c.url));
+    const out = [...primary];
+    for (const c of extra) {
+      if (seen.has(c.url)) continue;
+      seen.add(c.url);
+      out.push(c);
+    }
+    return out;
   }
 
   /**
