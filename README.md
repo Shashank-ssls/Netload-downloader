@@ -190,3 +190,8 @@ When `API_TOKEN` is set, every endpoint except `/api/health` requires
 - **Database**: `backend/database/downloader.db` (WAL)
 - **Logs**: `backend/logs/app-YYYY-MM-DD.log` · **Temp**: `backend/temp`
 - **Cookies**: `backend/cookies/` — global `cookies.txt` + optional per-site `<host>.txt`
+
+## License
+
+[MIT](LICENSE) © 2026 Shashank Singhal. Provided for educational and personal use — see
+the [Disclaimer](#️-disclaimer) above.

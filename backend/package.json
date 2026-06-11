@@ -1,7 +1,7 @@
 {
   "name": "netload-downloader-backend",
   "version": "1.0.0",
-  "description": "Hardened yt-dlp orchestration backend",
+  "description": "Universal self-hosted video downloader: yt-dlp + ffmpeg + a Playwright stealth-browser fallback that captures and stitches streams from sites yt-dlp can't parse natively. CLI, local API, or a portable double-click Windows .exe.",
   "main": "dist/index.js",
   "bin": {
     "netload": "dist/cli.js"
@@ -29,7 +29,7 @@
   },
   "keywords": [],
   "author": "",
-  "license": "ISC",
+  "license": "MIT",
   "dependencies": {
     "axios": "^1.16.1",
     "better-sqlite3": "^12.1.0",
