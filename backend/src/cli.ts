@@ -5,6 +5,7 @@
  *   netload <url> [--audio] [--format <id>] [--playlist] [--subs] [--thumb]
  *   netload batch <file>       download every URL in a file as one job
  *   netload corpus [path]      measure reach across a URL corpus (analyze only)
+ *   netload onboard <url>      scaffold a site rule + corpus fixture for a new site
  *
  * Requires the backend to be running (npm run dev / start). Set NETLOAD_API to
  * point at a non-default host (default http://127.0.0.1:4000).
@@ -16,6 +17,8 @@ import {
   Outcome, Expectation,
   evaluateExpectation, summarizeByCategory, diffRuns,
 } from './corpus/classify';
+import { suggestOnboarding, type DiagLike, type AnalyzeLike, type CorpusFixture } from './corpus/onboard';
+import type { SiteRule } from './providers/siteRules';
 
 const API = process.env.NETLOAD_API || 'http://127.0.0.1:4000';
 
@@ -33,6 +36,8 @@ function printHelp(): void {
 netload batch <file>    download every URL in a file (one per line) as one job
 netload corpus [path]   measure reach across a URL corpus (analyze only)
 netload diagnose <url>  inspect a (new/failing) site and report why it does/doesn't work
+netload onboard <url>   diagnose+analyze a new site, then scaffold a site rule + corpus fixture
+                          --name "Label"   fixture/rule label    --write   append to local files
 
   --audio          audio only (mp3)
   --format <id>    specific format id (from analyze)
@@ -324,6 +329,87 @@ async function runDiagnose(args: string[]): Promise<void> {
   console.log('');
 }
 
+/** Append a site rule to config/siteRules.json (skip if the host already has one). */
+function writeSiteRule(rule: SiteRule): { written: boolean; file: string } {
+  const file = path.resolve('config/siteRules.json');
+  let doc: { rules: SiteRule[] } = { rules: [] };
+  try {
+    const parsed = JSON.parse(fs.readFileSync(file, 'utf8'));
+    doc = Array.isArray(parsed) ? { rules: parsed } : { rules: parsed.rules || [], ...parsed };
+  } catch { /* new file */ }
+  const exists = doc.rules.some((r) => (r.match || []).some((m) => rule.match.includes(m)));
+  if (exists) return { written: false, file };
+  doc.rules.push(rule);
+  fs.mkdirSync(path.dirname(file), { recursive: true });
+  fs.writeFileSync(file, JSON.stringify(doc, null, 2));
+  return { written: true, file };
+}
+
+/** Append a corpus fixture to corpus/urls.json (skip if the URL is already there). */
+function writeCorpusFixture(fixture: CorpusFixture): { written: boolean; file: string } {
+  const file = path.resolve('corpus/urls.json');
+  let doc: { entries: CorpusFixture[] } = { entries: [] };
+  try {
+    const parsed = JSON.parse(fs.readFileSync(file, 'utf8'));
+    doc = { entries: parsed.entries || [], ...parsed };
+  } catch { /* new file */ }
+  if (doc.entries.some((e) => e.url === fixture.url)) return { written: false, file };
+  doc.entries.push(fixture);
+  fs.mkdirSync(path.dirname(file), { recursive: true });
+  fs.writeFileSync(file, JSON.stringify(doc, null, 2));
+  return { written: true, file };
+}
+
+async function runOnboard(args: string[]): Promise<void> {
+  const url = args.find((a) => !a.startsWith('-'));
+  if (!url) {
+    console.error('usage: netload onboard <url> [--name "Label"] [--write]');
+    process.exit(1);
+  }
+  const nIdx = args.indexOf('--name');
+  const name = nIdx >= 0 ? args[nIdx + 1] : undefined;
+  const write = args.includes('--write');
+
+  // Health check up front (both calls open a browser; fail fast if it's down).
+  try { await fetch(`${API}/api/health`); }
+  catch { console.error(`error: cannot reach backend at ${API} — start it (npm run dev) first`); process.exit(1); }
+
+  console.log(`\nOnboarding ${url} — running diagnose + analyze (this opens a headless browser)…`);
+  const [diag, analyzed] = await Promise.all([
+    fetch(`${API}/api/diagnose`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ url }) })
+      .then((r) => (r.ok ? r.json() : {})).catch(() => ({})) as Promise<DiagLike>,
+    analyzeFull(url),
+  ]);
+  const analyze = (analyzed.result || {}) as AnalyzeLike;
+
+  const s = suggestOnboarding(url, name, diag, analyze);
+
+  console.log(`\nHost: ${s.host}`);
+  console.log(s.alreadyWorks ? '  STATUS: already works ✔' : '  STATUS: needs a site rule');
+  console.log('\n  Notes:');
+  for (const n of s.notes) console.log(`    - ${n}`);
+
+  if (s.rule) {
+    console.log('\n  Suggested site rule (config/siteRules.json):');
+    console.log(JSON.stringify(s.rule, null, 2).split('\n').map((l) => '    ' + l).join('\n'));
+  }
+  console.log('\n  Corpus fixture (corpus/urls.json):');
+  console.log(JSON.stringify(s.fixture, null, 2).split('\n').map((l) => '    ' + l).join('\n'));
+
+  if (write) {
+    if (s.rule) {
+      const w = writeSiteRule(s.rule);
+      console.log(`\n  ${w.written ? 'added rule to' : 'rule already present in'} ${w.file}`);
+    }
+    const wf = writeCorpusFixture(s.fixture);
+    console.log(`  ${wf.written ? 'added fixture to' : 'fixture already present in'} ${wf.file}`);
+    console.log('  (siteRules.json hot-reloads; re-run `netload corpus` to verify)');
+  } else {
+    console.log('\n  (dry run — pass --write to append these to your local siteRules.json + corpus/urls.json)');
+  }
+  console.log('');
+}
+
 async function main(): Promise<void> {
   const argv = process.argv.slice(2);
   if (argv[0] === 'batch') {
@@ -336,6 +422,10 @@ async function main(): Promise<void> {
   }
   if (argv[0] === 'diagnose') {
     await runDiagnose(argv.slice(1));
+    return;
+  }
+  if (argv[0] === 'onboard') {
+    await runOnboard(argv.slice(1));
     return;
   }
   if (argv.length === 0 || argv.includes('-h') || argv.includes('--help')) {
