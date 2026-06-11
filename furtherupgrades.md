@@ -12,8 +12,9 @@ writing). Ordered roughly by leverage.
 
 ## The 3 biggest reach limiters (verified gaps)
 
-> **STATUS (updated):** #1 ✅ DONE and #5 ✅ DONE (commits 5a2db15, 85290de). #2/#3/#4
-> and the smaller items remain. Next recommended: #2 (MSE/appendBuffer), then #4, then #3.
+> **STATUS (updated):** #1 ✅ DONE, #5 ✅ DONE, #2 ✅ DONE (commits 5a2db15, 85290de,
+> 411ad8a). #3/#4 and the smaller items remain. Next recommended: #4 (yt-dlp freshness,
+> near-free), then #3 (DASH).
 
 ### 1. Tier-2 capture is URL-pattern-gated — opaque media URLs slip through entirely  ⭐ deepest fix  ✅ DONE
 - **Where:** `src/extractors/fallbackExtractor.ts:34-49` (`STREAM_URL_PATTERNS`) + the capture
@@ -31,7 +32,7 @@ writing). Ordered roughly by leverage.
   URL patterns as a cheap fast-path hint, but fall back to content sniffing so unknown CDNs are
   caught. This is the single highest-leverage change for "deal with sites new to it."
 
-### 2. No MSE / `appendBuffer` interception
+### 2. No MSE / `appendBuffer` interception  ✅ DONE
 - **Where:** confirmed zero matches for `appendBuffer|MediaSource|SourceBuffer` in `src`. The
   in-page hook in `src/extractors/segmentStitcher.ts` (`captureViaPlaylist`'s `addInitScript`)
   taps `Blob` / `fetch` / `XHR` for `#EXTM3U` only.
