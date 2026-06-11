@@ -12,9 +12,8 @@ writing). Ordered roughly by leverage.
 
 ## The 3 biggest reach limiters (verified gaps)
 
-> **STATUS (updated):** #1 ✅ DONE, #5 ✅ DONE, #2 ✅ DONE (commits 5a2db15, 85290de,
-> 411ad8a). #3/#4 and the smaller items remain. Next recommended: #4 (yt-dlp freshness,
-> near-free), then #3 (DASH).
+> **STATUS (updated):** #1 ✅, #5 ✅, #2 ✅, #4 ✅ (commits 5a2db15, 85290de, 411ad8a,
+> be45ff5). #3 (DASH) and the smaller items remain. Next recommended: #3 (DASH).
 
 ### 1. Tier-2 capture is URL-pattern-gated — opaque media URLs slip through entirely  ⭐ deepest fix  ✅ DONE
 - **Where:** `src/extractors/fallbackExtractor.ts:34-49` (`STREAM_URL_PATTERNS`) + the capture
@@ -57,7 +56,7 @@ writing). Ordered roughly by leverage.
 
 ## High-value supporting work
 
-### 4. yt-dlp freshness is manual only
+### 4. yt-dlp freshness is manual only  ✅ DONE
 - **Where:** only `setInterval`s are temp-cleanup (`index.ts:308`) and the WS heartbeat
   (`progress.ts:15`). Self-update exists but is manual via `POST /api/update/ytdlp`.
 - **Problem:** yt-dlp adds/fixes extractors almost daily; a stale binary silently loses native
