@@ -19,6 +19,7 @@ import { BrowserManager } from './utils/browserManager';
 import { PlaylistExpander } from './extractors/playlistExpander';
 import { Diagnostics } from './extractors/diagnostics';
 import { getBinaryVersions, updateYtdlp } from './utils/binaryVersions';
+import { YtdlpUpdater } from './utils/ytdlpUpdater';
 import { SsrfGuard } from './utils/ssrfGuard';
 import { apiTokenMiddleware, rateLimiter } from './middleware/security';
 
@@ -62,8 +63,10 @@ app.get('/api/health', (_req, res) => {
 });
 
 // Update yt-dlp (built-in self-update)
-app.post('/api/update/ytdlp', (_req, res) => {
-  const result = updateYtdlp();
+app.post('/api/update/ytdlp', (req, res) => {
+  // Body channel overrides the configured one (stable | nightly | master).
+  const channel = typeof req.body?.channel === 'string' ? req.body.channel : config.ytdlpChannel;
+  const result = updateYtdlp(channel);
   res.status(result.ok ? 200 : 500).json(result);
 });
 
@@ -337,6 +340,9 @@ setInterval(() => {
   FileValidator.cleanupTemp(config.tempPath, 24);
 }, 60 * 60 * 1000);
 
+// Keep yt-dlp fresh: throttled update on startup, then weekly (roadmap #4).
+YtdlpUpdater.start();
+
 server.listen(config.port, '127.0.0.1', () => {
   logger.info(`NetLoad Downloader Backend running on 127.0.0.1:${config.port}`);
 });
@@ -345,6 +351,7 @@ server.listen(config.port, '127.0.0.1', () => {
 async function shutdown(signal: string) {
   logger.info(`${signal} received — shutting down...`);
   server.close(() => logger.info('HTTP server closed'));
+  YtdlpUpdater.stop();
   YTDLPProcessManager.cancelAll();
   await BrowserManager.shutdown();
   closeDatabase();

@@ -24,6 +24,15 @@ export const config = {
   // Concurrency for segment-stitch downloads (gentle by default to avoid proxy throttling).
   segmentConcurrency: parseInt(process.env.SEGMENT_CONCURRENCY || '3', 10),
 
+  // yt-dlp freshness. yt-dlp ships new/fixed extractors almost daily, so a stale
+  // binary silently loses reach — we self-update on startup (throttled) + weekly.
+  // YTDLP_AUTO_UPDATE=false disables it. YTDLP_CHANNEL = stable | nightly | master
+  // (nightly/master carry the very latest extractor fixes, at some stability cost).
+  ytdlpAutoUpdate: process.env.YTDLP_AUTO_UPDATE !== 'false',
+  ytdlpChannel: process.env.YTDLP_CHANNEL || 'stable',
+  ytdlpUpdateIntervalMs:
+    Math.max(1, parseInt(process.env.YTDLP_UPDATE_INTERVAL_DAYS || '7', 10)) * 24 * 60 * 60 * 1000,
+
   // Security / limits. apiToken empty = auth disabled (localhost-only already).
   apiToken: process.env.API_TOKEN || '',
   rateLimitPerMin: parseInt(process.env.RATE_LIMIT_PER_MIN || '60', 10),
