@@ -1,5 +1,8 @@
 import { describe, it, expect } from 'vitest';
-import { classifyOutcome, matchesExpect } from '../src/corpus/classify';
+import {
+  classifyOutcome, matchesExpect,
+  evaluateExpectation, summarizeByCategory, diffRuns,
+} from '../src/corpus/classify';
 
 describe('classifyOutcome', () => {
   it('flags previews and auth before ok', () => {
@@ -36,5 +39,50 @@ describe('matchesExpect', () => {
     expect(matchesExpect('ok', 'preview')).toBe(false);
     expect(matchesExpect('error:VIDEO_UNAVAILABLE', 'error:VIDEO_UNAVAILABLE')).toBe(true);
     expect(matchesExpect('error:VIDEO_UNAVAILABLE', 'error:NETWORK_TIMEOUT')).toBe(false);
+  });
+});
+
+describe('evaluateExpectation (richer fixtures)', () => {
+  it('still supports the string form', () => {
+    expect(evaluateExpectation('ok', { title: 'V', duration: 120 }).ok).toBe(true);
+    expect(evaluateExpectation('ok', { title: 'V', duration: 0 }).ok).toBe(false);
+  });
+
+  it('enforces a duration floor (object form)', () => {
+    expect(evaluateExpectation({ outcome: 'ok', minDurationSec: 90 }, { title: 'V', duration: 120 }).ok).toBe(true);
+    const short = evaluateExpectation({ outcome: 'ok', minDurationSec: 90 }, { title: 'V', duration: 30 });
+    expect(short.ok).toBe(false);
+    expect(short.reason).toMatch(/duration 30s < 90s/);
+  });
+
+  it('enforces an expected extractor (case-insensitive)', () => {
+    expect(evaluateExpectation({ extractor: 'youtube' }, { title: 'V', duration: 9, extractor: 'YouTube' }).ok).toBe(true);
+    expect(evaluateExpectation({ extractor: 'youtube' }, { title: 'V', duration: 9, extractor: 'generic' }).ok).toBe(false);
+  });
+
+  it('object form with no outcome passes any non-error result that clears the floor', () => {
+    expect(evaluateExpectation({ minDurationSec: 5 }, { title: 'V', duration: 9 }).ok).toBe(true); // 'resolved', not error
+  });
+});
+
+describe('summarizeByCategory', () => {
+  it('tallies pass/total per category', () => {
+    const out = summarizeByCategory([
+      { category: 'anime', ok: true }, { category: 'anime', ok: false },
+      { category: 'movie', ok: true }, { ok: true },
+    ]);
+    expect(out).toEqual({ anime: { pass: 1, total: 2 }, movie: { pass: 1, total: 1 }, uncategorized: { pass: 1, total: 1 } });
+  });
+});
+
+describe('diffRuns (regression detection)', () => {
+  it('flags pass→fail as a regression and fail→pass as a recovery', () => {
+    const prev = { 'a': true, 'b': false, 'c': true };
+    const curr = { 'a': false, 'b': true, 'c': true };
+    expect(diffRuns(prev, curr)).toEqual({ regressions: ['a'], recoveries: ['b'] });
+  });
+
+  it('treats URLs unseen in the previous run as neither', () => {
+    expect(diffRuns({}, { 'new': false })).toEqual({ regressions: [], recoveries: [] });
   });
 });

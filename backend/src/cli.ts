@@ -12,7 +12,10 @@
 
 import fs from 'fs';
 import path from 'path';
-import { classifyOutcome, matchesExpect, Outcome } from './corpus/classify';
+import {
+  Outcome, Expectation,
+  evaluateExpectation, summarizeByCategory, diffRuns,
+} from './corpus/classify';
 
 const API = process.env.NETLOAD_API || 'http://127.0.0.1:4000';
 
@@ -64,12 +67,14 @@ interface CorpusEntry {
   name: string;
   url: string;
   category?: string;
-  expect?: string;
+  expect?: string | Expectation;
   note?: string;
 }
 
-/** Analyze one URL and reduce it to a coarse outcome string. */
-async function analyzeOutcome(url: string): Promise<Outcome> {
+type AnalyzeResult = { duration?: number; extractor?: string; isLikelyPreview?: boolean; requiresAuth?: boolean; title?: string };
+
+/** Analyze one URL, returning the full result (or an error outcome string). */
+async function analyzeFull(url: string): Promise<{ result?: AnalyzeResult; error?: Outcome }> {
   const ctrl = new AbortController();
   const timer = setTimeout(() => ctrl.abort(), 90_000);
   try {
@@ -81,11 +86,11 @@ async function analyzeOutcome(url: string): Promise<Outcome> {
     });
     if (!resp.ok) {
       const b = (await resp.json().catch(() => ({}))) as { error?: string };
-      return `error:${b.error || resp.status}`;
+      return { error: `error:${b.error || resp.status}` };
     }
-    return classifyOutcome((await resp.json()) as Record<string, unknown>);
+    return { result: (await resp.json()) as AnalyzeResult };
   } catch (e: any) {
-    return `error:${e?.name === 'AbortError' ? 'TIMEOUT' : 'UNREACHABLE'}`;
+    return { error: `error:${e?.name === 'AbortError' ? 'TIMEOUT' : 'UNREACHABLE'}` };
   } finally {
     clearTimeout(timer);
   }
@@ -117,24 +122,60 @@ async function runCorpus(args: string[]): Promise<void> {
   console.log(`(using ${path.basename(file)})`);
 
   console.log(`Reach corpus — ${entries.length} entries via ${API}\n`);
-  console.log(`  RESULT  ${'NAME'.padEnd(30)}${'CATEGORY'.padEnd(12)}${'EXPECT'.padEnd(10)}ACTUAL`);
+  console.log(`  RESULT  ${'NAME'.padEnd(30)}${'CATEGORY'.padEnd(12)}ACTUAL / REASON`);
+
+  const rows: { name: string; url: string; category?: string; ok: boolean }[] = [];
+  const currRun: Record<string, boolean> = {};
   let pass = 0;
   const failed: string[] = [];
+
   for (const e of entries) {
-    const actual = await analyzeOutcome(e.url);
-    const ok = matchesExpect(e.expect, actual);
-    if (ok) pass++;
-    else failed.push(e.name);
+    const { result, error } = await analyzeFull(e.url);
+    const { ok, actual, reason } = error
+      ? { ok: matchesError(e.expect, error), actual: error, reason: `expected ${expectLabel(e.expect)}, got ${error}` }
+      : evaluateExpectation(e.expect, result || {});
+    rows.push({ name: e.name, url: e.url, category: e.category, ok });
+    currRun[e.url] = ok;
+    if (ok) pass++; else failed.push(e.name);
     console.log(
       `  ${(ok ? 'PASS' : 'FAIL').padEnd(6)}  ${(e.name || '').slice(0, 28).padEnd(30)}` +
-        `${(e.category || '').padEnd(12)}${(e.expect || 'resolve').padEnd(10)}${actual}`,
+        `${(e.category || '').padEnd(12)}${ok ? actual : `${actual}  (${reason})`}`,
     );
   }
+
+  // Report card: per-category pass/total.
+  console.log('\n  By category:');
+  for (const [cat, s] of Object.entries(summarizeByCategory(rows))) {
+    console.log(`    ${cat.padEnd(14)} ${s.pass}/${s.total}`);
+  }
+
+  // Regression detection vs the previous run (per-machine baseline).
+  const runFile = path.resolve('corpus/.last-run.json');
+  let prevRun: Record<string, boolean> = {};
+  try { prevRun = JSON.parse(fs.readFileSync(runFile, 'utf8')); } catch { /* first run */ }
+  const { regressions, recoveries } = diffRuns(prevRun, currRun);
+  try { fs.writeFileSync(runFile, JSON.stringify(currRun, null, 2)); } catch { /* non-fatal */ }
+
   console.log(`\n${pass}/${entries.length} passed`);
+  if (recoveries.length) console.log(`RECOVERED (${recoveries.length}): ${recoveries.join(', ')}`);
+  if (regressions.length) console.log(`REGRESSED (${regressions.length}): ${regressions.join(', ')}`);
   if (failed.length) {
     console.log(`FAILED: ${failed.join(', ')}`);
     process.exit(1);
   }
+}
+
+/** Outcome label for an expectation (string or object form), for messages. */
+function expectLabel(expect: string | Expectation | undefined): string {
+  if (expect === undefined) return 'resolve';
+  return typeof expect === 'string' ? expect : (expect.outcome || 'resolve');
+}
+
+/** Does an error outcome satisfy the expectation's outcome part? */
+function matchesError(expect: string | Expectation | undefined, actual: Outcome): boolean {
+  const label = expectLabel(expect);
+  if (label === 'error') return actual.startsWith('error');
+  return label === actual; // exact 'error:CODE' match, else a non-error expectation fails
 }
 
 interface JobView {

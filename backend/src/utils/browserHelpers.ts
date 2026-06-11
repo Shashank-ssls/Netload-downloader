@@ -1,15 +1,24 @@
 import { Page } from 'playwright-core';
 import logger from '../logger';
+import { CaptchaSolver } from '../recovery/captcha';
 
 export class BrowserHelpers {
   /**
    * Attempts to solve an interactive Cloudflare challenge (Turnstile/Checkbox)
-   * by simulating human-like mouse interaction with challenge iframes.
+   * by simulating human-like mouse interaction with challenge iframes. If a
+   * pluggable captcha solver is configured (A6), it gets first crack at the
+   * interactive widgets (Turnstile/hCaptcha/reCAPTCHA) before the mouse heuristic.
    */
   static async solveCFChallenge(page: Page): Promise<boolean> {
+    // External solver hook first (no-op unless CAPTCHA_SOLVER_CMD is set).
+    if (CaptchaSolver.enabled && await CaptchaSolver.trySolve(page).catch(() => false)) {
+      await page.waitForNavigation({ waitUntil: 'networkidle', timeout: 30000 }).catch(() => {});
+      return true;
+    }
+
     const pageContent = await page.content().catch(() => '');
-    const isCFChallenge = 
-      pageContent.includes('Just a moment') || 
+    const isCFChallenge =
+      pageContent.includes('Just a moment') ||
       pageContent.includes('Checking your browser') ||
       pageContent.includes('cf-browser-verification') ||
       pageContent.includes('Enable JavaScript and cookies to continue');

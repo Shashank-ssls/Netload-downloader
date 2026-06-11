@@ -1,0 +1,16 @@
+{
+  "_note": "TEMPLATE for declarative site rules. Copy to `siteRules.json` (same folder) and add YOUR site rows there — `siteRules.json` is gitignored and hot-reloaded (no restart needed). A rule applies when ANY string in `match` is contained in the URL, and is checked AFTER the hand-written providers but BEFORE the generic fallback. Fields: match (required string[]), name, impersonate (chrome|safari|edge|null), format (yt-dlp -f), extractorArgs (string[] -> --extractor-args), hlsNative (bool -> --hls-prefer-native --hls-use-mpegts), socketTimeout (number), referer ('self' or a URL), headers (object -> --add-header K:V). Entries without a non-empty `match` array are ignored (so this _note is skipped).",
+  "rules": [
+    {
+      "name": "example-streamhost",
+      "match": ["examplestream.tv", "embed.examplestream"],
+      "impersonate": "chrome",
+      "format": "bestvideo+bestaudio/best",
+      "hlsNative": true,
+      "referer": "self",
+      "extractorArgs": ["generic:impersonate"],
+      "socketTimeout": 30,
+      "headers": { "Origin": "https://examplestream.tv" }
+    }
+  ]
+}

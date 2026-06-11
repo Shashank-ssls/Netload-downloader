@@ -56,6 +56,12 @@ export const config = {
   maxRequestBodyKb: parseInt(process.env.MAX_REQUEST_BODY_KB || '256', 10),
   // Allow analyze/download of private/loopback hosts (off by default — SSRF guard).
   allowPrivateUrls: process.env.ALLOW_PRIVATE_URLS === 'true',
+
+  // Optional external captcha solver hook (authorized use). A command invoked as
+  // `<cmd> <type> <sitekey> <pageUrl>` that prints a solution token on stdout for
+  // Turnstile/hCaptcha/reCAPTCHA. Empty = no hook (rely on stealth auto-solve).
+  captchaSolverCmd: process.env.CAPTCHA_SOLVER_CMD || '',
+  captchaSolverTimeoutMs: Math.max(5, parseInt(process.env.CAPTCHA_SOLVER_TIMEOUT_SEC || '120', 10)) * 1000,
   logPath: path.resolve(process.env.LOG_PATH || './logs'),
 };
 

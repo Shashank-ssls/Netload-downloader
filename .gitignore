@@ -54,3 +54,9 @@ desktop.ini
 # Private reach corpus — your real site list stays on this machine only.
 # (urls.example.json is the committed template.)
 backend/corpus/urls.json
+# Corpus report-card baseline (per-machine run history).
+backend/corpus/.last-run.json
+
+# Private declarative site rules — your real onboarded-site list stays local.
+# (siteRules.example.json is the committed template.)
+backend/config/siteRules.json
