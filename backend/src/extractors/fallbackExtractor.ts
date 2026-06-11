@@ -22,8 +22,9 @@ import logger from '../logger';
 import { HeaderBuilder } from '../utils/headers';
 import { BrowserManager } from '../utils/browserManager';
 import { BrowserHelpers } from '../utils/browserHelpers';
-import { CookieHarvester } from '../utils/cookieHarvester';
+import { CookieHarvester, registrableDomain } from '../utils/cookieHarvester';
 import { BrowserProfiles } from '../utils/browserProfiles';
+import { PageMeta, extractImageUrlFromText } from '../utils/pageMeta';
 import type { CapturedStream, StreamMagnitude } from '../types';
 import type { Page, Response as PlaywrightResponse } from 'playwright-core';
 import { classifyContentType, classifyBytes, type MediaKind } from './mediaSignature';
@@ -528,6 +529,12 @@ export class FallbackExtractor {
       stop.value = true;
       await driver;
 
+      // Read title + thumbnail from the RENDERED DOM — an SPA (e.g. hanime.tv)
+      // injects og:image/og:title via JS, so a later static PageMeta.fetch sees
+      // nothing. Remember what the browser sees so the downloader can name the
+      // fallback output and set the thumbnail. Best-effort.
+      await this.rememberPageMeta(page, url).catch(() => {});
+
       // Reuse the stealth browser's session cookies (CF clearance / login) for
       // later yt-dlp calls — only if this host has no cookie file yet.
       await CookieHarvester.harvest(context, url).catch(() => {});
@@ -654,6 +661,46 @@ export class FallbackExtractor {
       }
     }
     return out;
+  }
+
+  /**
+   * Read title + thumbnail from the rendered page and remember them for the
+   * downloader's fallback-output naming. The title comes from the main frame
+   * (og:title / twitter:title / <title>). The thumbnail is often NOT on the main
+   * page (an SPA like hanime.tv puts the poster in a player iframe), so we also scan
+   * child frames — but ONLY same-site ones, to avoid grabbing an ad-iframe poster.
+   * For a trusted same-site frame we accept og:image / a <video poster>, and as a
+   * last resort a poster URL embedded in the frame's own URL.
+   */
+  private static async rememberPageMeta(page: Page, url: string): Promise<void> {
+    let pageReg = '';
+    try { pageReg = registrableDomain(new URL(url).hostname); } catch { /* leave empty */ }
+
+    const readFrame = (frame: import('playwright-core').Frame) =>
+      frame.evaluate(() => {
+        const m = (sel: string) => document.querySelector(sel)?.getAttribute('content') || '';
+        const title = m('meta[property="og:title"]') || m('meta[name="twitter:title"]') || document.title || '';
+        const poster = (document.querySelector('video[poster]') as HTMLVideoElement | null)?.poster || '';
+        const thumb = m('meta[property="og:image"]') || m('meta[name="twitter:image"]') || poster || '';
+        return { title: title.trim(), thumbnail: thumb.trim() };
+      }).catch(() => ({ title: '', thumbnail: '' }));
+
+    let title = '';
+    let thumbnail = '';
+    for (const frame of page.frames()) {
+      const fUrl = frame.url();
+      let sameSite = false;
+      try { sameSite = !!fUrl && !!pageReg && registrableDomain(new URL(fUrl).hostname) === pageReg; } catch { /* opaque */ }
+
+      const info = await readFrame(frame);
+      if (!title && info.title) title = info.title;            // main frame is first → its title wins
+      if (!thumbnail && sameSite) {
+        if (/^https?:\/\//.test(info.thumbnail)) thumbnail = info.thumbnail;
+        else thumbnail = extractImageUrlFromText(fUrl);        // poster embedded in the player-frame URL
+      }
+      if (title && thumbnail) break;
+    }
+    PageMeta.remember(url, { title: title || undefined, thumbnail: thumbnail || undefined });
   }
 
   /** Concatenate two candidate lists, dropping any whose URL is already present. */

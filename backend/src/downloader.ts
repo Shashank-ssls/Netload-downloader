@@ -44,20 +44,30 @@ function passesIntegrity(taskId: string, filePath: string): boolean {
 }
 
 /**
- * Output path for the custom-capture paths (segment/MSE/DASH), named from the
- * page's real OG/HTML title instead of the opaque taskId — and the task's title +
- * thumbnail are updated to match (these paths bypass yt-dlp's title handling, and
- * some players expose an obfuscated JS title, so we read og:title/og:image).
+ * Resolve a page's real OG/HTML title to a sanitized filename base, AND update the
+ * task's title + thumbnail to match. Returns '' when the page exposes no usable
+ * title (the caller falls back to the taskId / yt-dlp's own naming). Shared by the
+ * custom-capture paths (segment/MSE/DASH) and the candidate-walk fallback — both
+ * bypass or can't trust yt-dlp's title handling (some players expose an obfuscated
+ * JS title; an opaque CDN stream has only a garbage stream-id "title").
  */
-async function customOutputPath(taskId: string, url: string): Promise<string> {
+async function resolvePageTitleBase(taskId: string, url: string): Promise<string> {
   const meta: PageMetaInfo = await PageMeta.fetch(url).catch(() => ({}));
   const title = meta.title ? cleanTitle(meta.title) : '';
   const updates: Partial<Task> = {};
   if (title) updates.title = title;
   if (meta.thumbnail && meta.thumbnail.startsWith('http')) updates.thumbnail = meta.thumbnail;
   if (Object.keys(updates).length) tasks.update(taskId, updates);
-  const base = title ? sanitizeFilename(title) : taskId;
-  return path.join(config.storagePath, `${base}.mp4`);
+  return title ? sanitizeFilename(title) : '';
+}
+
+/**
+ * Output path for the custom-capture paths (segment/MSE/DASH), named from the
+ * page's real OG/HTML title instead of the opaque taskId.
+ */
+async function customOutputPath(taskId: string, url: string): Promise<string> {
+  const base = await resolvePageTitleBase(taskId, url);
+  return path.join(config.storagePath, `${base || taskId}.mp4`);
 }
 
 export async function downloadMedia(taskId: string, onProgress: (data: ProgressData) => void): Promise<string> {
@@ -94,6 +104,10 @@ export async function downloadMedia(taskId: string, onProgress: (data: ProgressD
   // extractor failed. `triedGeneric` ensures it runs at most once.
   let forceGeneric = false;
   let triedGeneric = false;
+  // PageMeta-derived filename base for candidate-walk fallback streams (an opaque
+  // CDN URL fed to yt-dlp). Resolved once from the original page's og:title, then
+  // memoized across retries: null = not yet attempted, '' = attempted, no title.
+  let fallbackTitleBase: string | null = null;
 
   // Fail fast if the storage drive is nearly full (before pulling a large file).
   const freeMB = FileValidator.getFreeSpaceMB(config.storagePath);
@@ -136,8 +150,21 @@ export async function downloadMedia(taskId: string, onProgress: (data: ProgressD
       args.push('--max-filesize', `${config.maxFilesizeMB}M`);
     }
 
-    // Output path
-    args.push('-o', path.join(config.storagePath, '%(title)s.%(ext)s'));
+    // Output path. For a candidate-walk fallback stream (an opaque CDN URL fed to
+    // yt-dlp), yt-dlp's %(title)s is the garbage stream id and the thumbnail is NA —
+    // name the file from the original page's og:title and set the task title +
+    // thumbnail to match (resolved once from task.url, memoized across retries).
+    let titleBase = '';
+    if (isFallbackStream) {
+      if (fallbackTitleBase === null) fallbackTitleBase = await resolvePageTitleBase(taskId, task.url);
+      titleBase = fallbackTitleBase;
+    }
+    // When we've named the output ourselves, don't let yt-dlp's metadata clobber the
+    // good title/thumbnail we set (the print still fires, but onMetadata ignores it).
+    const suppressYtdlpMeta = !!titleBase;
+    // Strip % so the literal title can't be misread as a yt-dlp output-template field.
+    const outBase = titleBase ? titleBase.replace(/%/g, '') : '%(title)s';
+    args.push('-o', path.join(config.storagePath, `${outBase}.%(ext)s`));
 
     // Metadata capture via --print (fires before download starts)
     args.push('--print', 'before_dl:%(title)s\t%(uploader)s\t%(thumbnail)s');
@@ -194,9 +221,11 @@ export async function downloadMedia(taskId: string, onProgress: (data: ProgressD
         },
         onMetadata: (meta) => {
           const updates: Partial<Task> = {};
-          if (meta.title && meta.title !== 'NA') updates.title = meta.title;
+          // For a self-named fallback stream, keep the og:title/og:image we set and
+          // ignore yt-dlp's opaque stream-id title / NA thumbnail.
+          if (!suppressYtdlpMeta && meta.title && meta.title !== 'NA') updates.title = meta.title;
           if (meta.uploader && meta.uploader !== 'NA') updates.uploader = meta.uploader;
-          if (meta.thumbnail && meta.thumbnail !== 'NA' && meta.thumbnail.startsWith('http')) {
+          if (!suppressYtdlpMeta && meta.thumbnail && meta.thumbnail !== 'NA' && meta.thumbnail.startsWith('http')) {
             updates.thumbnail = meta.thumbnail;
           }
           if (Object.keys(updates).length > 0) tasks.update(taskId, updates);

@@ -25,12 +25,14 @@ export interface PageMetaInfo {
   thumbnail?: string;
 }
 
-/** Strip the boilerplate site suffix sites tack onto a title
- *  (" - Watch on Anikage", " | SomeSite", " - Watch online"). Pure. */
+/** Strip the boilerplate sites tack onto a title — a leading "Watch ", a trailing
+ *  "- Watch on Anikage" / "| SomeSite" / "- site.tld" suffix. Pure. */
 export function cleanTitle(raw: string): string {
   let t = (raw || '').trim();
-  t = t.replace(/\s*[-|–—]\s*watch\s+(online|on)\b.*$/i, '');
-  t = t.replace(/\s*\|\s*[^|]{1,40}$/, '');
+  t = t.replace(/\s*[-|–—]\s*watch\s+(online|on)\b.*$/i, '');     // "- Watch on/online …"
+  t = t.replace(/\s*[-|–—]\s*[\w-]+\.[a-z]{2,6}\s*$/i, '');        // trailing "- hanime.tv"
+  t = t.replace(/\s*\|\s*[^|]{1,40}$/, '');                        // trailing "| SiteName"
+  t = t.replace(/^\s*watch\s+/i, '');                             // leading "Watch "
   return t.trim() || (raw || '').trim();
 }
 
@@ -43,6 +45,17 @@ export function sanitizeFilename(name: string): string {
     .slice(0, 150)
     .replace(/[_.]+$/g, '');
   return s || 'video';
+}
+
+/** Pull the first image URL embedded in a string (e.g. a player-iframe URL that
+ *  carries the poster as a query param, often percent-encoded). Returns '' if none.
+ *  Pure — unit-tested. Used only for trusted same-site frames, so it's safe to trust. */
+export function extractImageUrlFromText(text: string): string {
+  if (!text) return '';
+  let decoded = text;
+  try { decoded = decodeURIComponent(text); } catch { /* keep raw on malformed % */ }
+  const m = /https?:\/\/[^\s,'"<>()]+\.(?:webp|jpe?g|png|gif)(?:\?[^\s,'"<>()]*)?/i.exec(decoded);
+  return m ? m[0] : '';
 }
 
 /** Extract title + thumbnail from page HTML (OG tags first, then twitter, then
@@ -61,9 +74,41 @@ export function extractMeta(html: string): PageMetaInfo {
   return { title: title?.trim() || undefined, thumbnail: thumbnail?.trim() || undefined };
 }
 
+// Metadata read from a page's RENDERED DOM (during a Tier 2 browser pass), keyed by
+// URL. SPAs like hanime.tv inject og:image/og:title via JS, so a static HTML fetch
+// sees nothing — but the browser fallback already renders the page, so we stash what
+// it sees here and let fetch() prefer it. Bounded FIFO so it can't grow unbounded.
+const RENDERED_CACHE = new Map<string, PageMetaInfo>();
+const RENDERED_CACHE_MAX = 50;
+
 export class PageMeta {
-  /** Fetch + parse a page's metadata. Best-effort: returns {} on any failure. */
+  /** Record metadata observed in a page's rendered DOM (Tier 2). Non-empty fields
+   *  only; merges with anything already remembered for the URL. */
+  static remember(url: string, info: PageMetaInfo): void {
+    if (!url || !info || (!info.title && !info.thumbnail)) return;
+    const prev = RENDERED_CACHE.get(url) || {};
+    const merged: PageMetaInfo = {
+      title: info.title || prev.title,
+      thumbnail: info.thumbnail || prev.thumbnail,
+    };
+    RENDERED_CACHE.delete(url); // re-insert to keep FIFO recency
+    RENDERED_CACHE.set(url, merged);
+    while (RENDERED_CACHE.size > RENDERED_CACHE_MAX) {
+      RENDERED_CACHE.delete(RENDERED_CACHE.keys().next().value as string);
+    }
+  }
+
+  /**
+   * Fetch + parse a page's metadata, preferring values seen in the rendered DOM
+   * (Tier 2) over the static HTML — so a JS-injected og:image is used when the
+   * static fetch has none. Best-effort: returns {} on any failure.
+   */
   static async fetch(url: string): Promise<PageMetaInfo> {
+    const rendered = RENDERED_CACHE.get(url) || {};
+    // Nothing more to gain from a static fetch if the render already gave us both.
+    if (rendered.title && rendered.thumbnail) return rendered;
+
+    let staticMeta: PageMetaInfo = {};
     try {
       const r = await axios.get(url, {
         headers: { 'User-Agent': UA },
@@ -72,10 +117,13 @@ export class PageMeta {
         responseType: 'text',
         transformResponse: (d) => d,
       });
-      if (r.status >= 400 || typeof r.data !== 'string') return {};
-      return extractMeta(r.data);
+      if (r.status < 400 && typeof r.data === 'string') staticMeta = extractMeta(r.data);
     } catch {
-      return {};
+      /* fall back to whatever the render gave us */
     }
+    return {
+      title: rendered.title || staticMeta.title,
+      thumbnail: rendered.thumbnail || staticMeta.thumbnail,
+    };
   }
 }
