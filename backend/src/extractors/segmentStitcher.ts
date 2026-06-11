@@ -80,6 +80,14 @@ const PLAY_BUTTON_SELECTORS = [
   'button[aria-label*="play" i]', '[aria-label*="Play" i]', '.icon-play', '.fa-play', 'video',
 ];
 
+/** An #EXT-X-MEDIA rendition (subtitle or alternate audio) with an absolute URI. */
+export interface MediaRendition {
+  lang: string;
+  name: string;
+  uri: string;
+  isDefault: boolean;
+}
+
 interface SegmentCapture {
   segments: string[];
   headers: Record<string, string>;
@@ -89,6 +97,10 @@ interface SegmentCapture {
   // The intercepted media playlist with all URIs rewritten absolute (when the
   // playlist-intercept path was used). Lets ffmpeg do the download/decrypt.
   playlistText?: string;
+  // A5: subtitle tracks + a separate audio rendition pulled from the master's
+  // #EXT-X-MEDIA entries (the video variant often omits them).
+  subtitleTracks?: MediaRendition[];
+  audioTrack?: MediaRendition;
 }
 
 export interface StitchResult {
@@ -198,6 +210,11 @@ export class SegmentStitcher {
       await this.stitchManualWithRetry(cap, outPath, onProgress);
     }
 
+    // A5: write subtitle sidecars (best-effort — never fail the download over subs).
+    if (cap.subtitleTracks?.length) {
+      await this.fetchSubtitleSidecars(cap, outPath).catch((e) => logger.warn({ err: e.message }, 'Subtitle sidecar fetch failed'));
+    }
+
     // Verify completeness against what the player said the duration was.
     const outDur = FileValidator.probeDurationSec(outPath) ?? 0;
     const partial = cap.durationSec > 0 && outDur > 0 && outDur < cap.durationSec * COMPLETE_COVERAGE_RATIO;
@@ -205,6 +222,51 @@ export class SegmentStitcher {
       logger.warn({ outPath, outDur, reported: cap.durationSec }, 'Stitched output is shorter than reported duration — partial capture');
     }
     return { path: outPath, partial };
+  }
+
+  /**
+   * Download each subtitle track to a `<output>.<lang>.srt` sidecar via ffmpeg
+   * (its hls demuxer concatenates the WebVTT segments + timestamp maps). Best-effort
+   * and de-duped by language; a failed track is skipped, not fatal. (A5)
+   */
+  private static async fetchSubtitleSidecars(cap: SegmentCapture, outPath: string): Promise<void> {
+    const tracks = cap.subtitleTracks || [];
+    const ffmpeg = path.join(config.ffmpegPath, 'ffmpeg.exe');
+    const headerLines = Object.entries(cap.headers).map(([k, v]) => `${k}: ${v}`).join('\r\n') + '\r\n';
+    const baseNoExt = outPath.replace(/\.[^./\\]+$/, '');
+    const seen = new Set<string>();
+    for (const t of tracks.slice(0, 4)) {
+      const lang = ((t.lang || 'und').replace(/[^a-z0-9_-]/gi, '').slice(0, 8)) || 'und';
+      if (seen.has(lang)) continue;
+      seen.add(lang);
+      const subOut = `${baseNoExt}.${lang}.srt`;
+      const args = [
+        '-y', '-headers', headerLines, '-user_agent', cap.userAgent,
+        '-protocol_whitelist', 'file,http,https,tcp,tls,crypto', '-i', t.uri, subOut,
+      ];
+      try {
+        await this.runSubtitleFfmpeg(ffmpeg, args);
+        logger.info({ subOut, lang }, 'Subtitle sidecar written');
+      } catch (e: any) {
+        logger.warn({ lang, err: e.message }, 'Subtitle track failed (skipping)');
+      }
+    }
+  }
+
+  private static runSubtitleFfmpeg(ffmpeg: string, args: string[]): Promise<void> {
+    return new Promise((resolve, reject) => {
+      const child = spawn(ffmpeg, args);
+      const wd = armWatchdog(child, { stallMs: config.ffmpegStallMs, label: 'ffmpeg-subs' });
+      let tail = '';
+      child.stderr.on('data', (d) => { wd.kick(); tail = (tail + d.toString()).slice(-2000); });
+      child.on('error', (err) => { wd.disarm(); reject(err); });
+      child.on('close', (code) => {
+        wd.disarm();
+        if (wd.timedOut()) reject(new Error('subtitle ffmpeg stalled'));
+        else if (code === 0) resolve();
+        else reject(new Error(tail.slice(-200)));
+      });
+    });
   }
 
   // ─── PRIMARY CAPTURE: intercept the decrypted m3u8 playlist in-page ──────────
@@ -283,7 +345,7 @@ export class SegmentStitcher {
 
       // Poll for a captured playlist that yields enough segments.
       const deadline = Date.now() + PLAYLIST_WAIT_MS;
-      let best: { segments: string[]; durationSec: number; text: string; base: string } | null = null;
+      let best: { segments: string[]; durationSec: number; text: string; base: string; master?: string } | null = null;
       const fetchedVariants = new Set<string>();
       while (Date.now() < deadline) {
         const caps: string[] = await page.evaluate(() => (window as any).__caps || []).catch(() => []);
@@ -291,6 +353,7 @@ export class SegmentStitcher {
           let parsed = this.parsePlaylist(text, prefix);
           let parsedText = text;
           let base = prefix;
+          let master: string | undefined;
 
           // Master playlist (variants only, no #EXTINF) — follow its highest-
           // bandwidth variant to the real media playlist. Relative variant URIs
@@ -302,14 +365,14 @@ export class SegmentStitcher {
               const mediaText = await this.fetchText(variantUrl, headers, userAgent);
               const mediaParsed = mediaText ? this.parsePlaylist(mediaText, variantUrl) : null;
               if (mediaParsed && mediaText) {
-                parsed = mediaParsed; parsedText = mediaText; base = variantUrl;
+                parsed = mediaParsed; parsedText = mediaText; base = variantUrl; master = text;
                 logger.info({ variantUrl, segments: mediaParsed.segments.length }, 'Followed master playlist to best variant');
               }
             }
           }
 
           if (parsed && (!best || parsed.segments.length > best.segments.length)) {
-            best = { ...parsed, text: parsedText, base };
+            best = { ...parsed, text: parsedText, base, master };
           }
         }
         if (best && best.segments.length >= SEGMENT_RUN_MIN) break;
@@ -317,6 +380,14 @@ export class SegmentStitcher {
       }
 
       if (!best || best.segments.length < SEGMENT_RUN_MIN) return null;
+
+      // A5: pull subtitle tracks + a separate audio rendition from the master, if any.
+      const subtitleTracks = best.master ? this.parseMediaRenditions(best.master, prefix, 'SUBTITLES') : [];
+      const audioTrack = best.master ? this.pickDefaultRendition(this.parseMediaRenditions(best.master, prefix, 'AUDIO')) : undefined;
+      if (subtitleTracks.length || audioTrack) {
+        logger.info({ subtitles: subtitleTracks.map((s) => s.lang), audio: audioTrack?.lang }, 'Found subtitle/alt-audio renditions');
+      }
+
       logger.info({ segments: best.segments.length, durationSec: Math.round(best.durationSec) }, 'Intercepted decrypted playlist');
       return {
         segments: best.segments,
@@ -325,6 +396,8 @@ export class SegmentStitcher {
         durationSec: best.durationSec,
         coverageSec: best.durationSec,
         playlistText: this.normalizePlaylist(best.text, best.base),
+        subtitleTracks,
+        audioTrack,
       };
 
     } catch (err: any) {
@@ -373,6 +446,41 @@ export class SegmentStitcher {
     } catch {
       return null;
     }
+  }
+
+  /**
+   * Parse `#EXT-X-MEDIA` renditions of a TYPE (SUBTITLES / AUDIO) from a master
+   * playlist, resolving each URI absolute. Renditions without a URI (audio muxed
+   * into the video variant) are skipped. Pure — unit-tested. (A5)
+   */
+  static parseMediaRenditions(masterText: string, baseHint: string, type: 'SUBTITLES' | 'AUDIO'): MediaRendition[] {
+    const out: MediaRendition[] = [];
+    for (const raw of masterText.split(/\r?\n/)) {
+      const line = raw.trim();
+      if (!/^#EXT-X-MEDIA:/i.test(line)) continue;
+      const attrs = line.slice(line.indexOf(':') + 1);
+      const get = (k: string): string => {
+        const m = attrs.match(new RegExp(`${k}="([^"]*)"`, 'i')) || attrs.match(new RegExp(`${k}=([^,]+)`, 'i'));
+        return m ? m[1].trim() : '';
+      };
+      if (get('TYPE').toUpperCase() !== type) continue;
+      const uri = get('URI');
+      if (!uri) continue; // muxed-in (no separate playlist) — nothing to fetch
+      const resolved = this.resolveSegUrl(uri, baseHint);
+      if (!resolved) continue;
+      out.push({
+        lang: get('LANGUAGE') || get('NAME') || 'und',
+        name: get('NAME'),
+        uri: resolved,
+        isDefault: /YES/i.test(get('DEFAULT')),
+      });
+    }
+    return out;
+  }
+
+  /** The default rendition (or the first), or undefined. Pure. */
+  static pickDefaultRendition(renditions: MediaRendition[]): MediaRendition | undefined {
+    return renditions.find((r) => r.isDefault) || renditions[0];
   }
 
   static resolveSegUrl(uri: string, baseHint: string): string | null {
@@ -601,6 +709,8 @@ export class SegmentStitcher {
     try {
       const ffmpeg = path.join(config.ffmpegPath, 'ffmpeg.exe');
       const headerLines = Object.entries(cap.headers).map(([k, v]) => `${k}: ${v}`).join('\r\n') + '\r\n';
+      // A5: a separate audio rendition (its URI is a real URL ffmpeg fetches itself).
+      const altAudio = cap.audioTrack?.uri;
 
       const args = [
         '-y',
@@ -611,13 +721,18 @@ export class SegmentStitcher {
         // strict extension policing so it will fetch them.
         '-extension_picky', '0',
         '-i', playlistUrl,
-        '-c', 'copy',
       ];
+      // Separate audio: a 2nd input (same headers), then take video from #0, audio from #1.
+      if (altAudio) {
+        args.push('-headers', headerLines, '-user_agent', cap.userAgent, '-extension_picky', '0', '-i', altAudio);
+      }
+      args.push('-c', 'copy');
+      if (altAudio) args.push('-map', '0:v:0', '-map', '1:a:0');
       // ADTS→ASC only applies to MPEG-TS audio; fMP4 audio is already ASC-framed.
       if (!isFmp4) args.push('-bsf:a', 'aac_adtstoasc');
       args.push(outPath);
 
-      logger.info({ outPath, isFmp4, port }, 'Stitching via ffmpeg HLS engine');
+      logger.info({ outPath, isFmp4, port, altAudio: !!altAudio }, 'Stitching via ffmpeg HLS engine');
       await this.runFfmpeg(ffmpeg, args, cap.durationSec, onProgress);
       onProgress({ progress: 100, size: '—', speed: '—', eta: '0s' });
       logger.info({ outPath }, 'ffmpeg playlist stitch complete');

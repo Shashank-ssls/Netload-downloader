@@ -30,9 +30,11 @@ export interface LoginResult {
 }
 
 /** Shape the final result from the captured profile + how the session ended.
- *  Pure, so it's unit-tested. */
+ *  `saved` reflects whether a profile was actually persisted (cookies OR
+ *  localStorage — some sites keep auth only in localStorage). Pure — unit-tested. */
 export function summarizeLogin(
   host: string,
+  saved: boolean,
   cookieCount: number,
   endedByClose: boolean,
   startedAt: number,
@@ -40,7 +42,7 @@ export function summarizeLogin(
 ): LoginResult {
   return {
     host,
-    saved: cookieCount > 0,
+    saved,
     reason: endedByClose ? 'window-closed' : 'timeout',
     cookies: cookieCount,
     durationMs: now - startedAt,
@@ -72,12 +74,13 @@ export class InteractiveLogin {
 
       const deadline = startedAt + timeoutMs;
       let lastCookies = 0;
+      let savedAny = false;
       while (!closed && Date.now() < deadline) {
         // Periodic snapshot — the latest good session survives an abrupt close.
         const state = await context.storageState().catch(() => null);
         if (state) {
-          const scoped = BrowserProfiles.save(context, url);
-          await scoped.catch(() => {});
+          const wrote = await BrowserProfiles.save(context, url).catch(() => false);
+          savedAny = savedAny || wrote;
           lastCookies = state.cookies?.filter((c) => {
             const cd = (c.domain || '').replace(/^\./, '');
             return cd === host || cd.endsWith(host) || host.endsWith(cd);
@@ -87,9 +90,9 @@ export class InteractiveLogin {
       }
 
       // Final snapshot if the window is still open at the deadline.
-      if (!closed) await BrowserProfiles.save(context, url).catch(() => {});
+      if (!closed) savedAny = (await BrowserProfiles.save(context, url).catch(() => false)) || savedAny;
 
-      const result = summarizeLogin(host, lastCookies, closed, startedAt, Date.now());
+      const result = summarizeLogin(host, savedAny, lastCookies, closed, startedAt, Date.now());
       logger.info(result, 'Interactive login finished');
       return result;
     } finally {

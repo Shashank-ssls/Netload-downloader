@@ -15,6 +15,7 @@ import { CloudflareRecoveryManager } from './recovery/cloudflare';
 import { FileValidator } from './utils/validators';
 import { CookieResolver } from './utils/cookieResolver';
 import { UARotator } from './utils/userAgents';
+import { PageMeta, cleanTitle, sanitizeFilename, type PageMetaInfo } from './utils/pageMeta';
 
 // Patterns that indicate the target URL is a direct media stream
 const DIRECT_STREAM_PATTERNS = [
@@ -40,6 +41,23 @@ function passesIntegrity(taskId: string, filePath: string): boolean {
   const res = FileValidator.checkPlayable(filePath, { requireVideo: true });
   if (!res.ok) logger.warn({ taskId, filePath, reason: res.reason }, 'Mux output failed integrity check — discarding');
   return res.ok;
+}
+
+/**
+ * Output path for the custom-capture paths (segment/MSE/DASH), named from the
+ * page's real OG/HTML title instead of the opaque taskId — and the task's title +
+ * thumbnail are updated to match (these paths bypass yt-dlp's title handling, and
+ * some players expose an obfuscated JS title, so we read og:title/og:image).
+ */
+async function customOutputPath(taskId: string, url: string): Promise<string> {
+  const meta: PageMetaInfo = await PageMeta.fetch(url).catch(() => ({}));
+  const title = meta.title ? cleanTitle(meta.title) : '';
+  const updates: Partial<Task> = {};
+  if (title) updates.title = title;
+  if (meta.thumbnail && meta.thumbnail.startsWith('http')) updates.thumbnail = meta.thumbnail;
+  if (Object.keys(updates).length) tasks.update(taskId, updates);
+  const base = title ? sanitizeFilename(title) : taskId;
+  return path.join(config.storagePath, `${base}.mp4`);
 }
 
 export async function downloadMedia(taskId: string, onProgress: (data: ProgressData) => void): Promise<string> {
@@ -276,7 +294,7 @@ export async function downloadMedia(taskId: string, onProgress: (data: ProgressD
             logger.info({ taskId, segPrefix }, 'Segmented stream detected — capturing + stitching segments');
             tasks.update(taskId, { status: 'downloading', progress: 0 });
             try {
-              const outPath = path.join(config.storagePath, `${taskId}.mp4`);
+              const outPath = await customOutputPath(taskId, task.url);
               const stitched = await SegmentStitcher.run(task.url, segPrefix, outPath, (data) => {
                 tasks.update(taskId, { progress: data.progress, filesize: data.size, speed: data.speed, eta: data.eta });
                 onProgress(data);
@@ -310,7 +328,7 @@ export async function downloadMedia(taskId: string, onProgress: (data: ProgressD
             logger.info({ taskId }, 'No network media found — attempting MSE/appendBuffer capture');
             tasks.update(taskId, { status: 'downloading', progress: 0 });
             try {
-              const outPath = path.join(config.storagePath, `${taskId}.mp4`);
+              const outPath = await customOutputPath(taskId, task.url);
               const captured = await MseCapturer.run(task.url, outPath, (data) => {
                 tasks.update(taskId, { progress: data.progress, filesize: data.size, speed: data.speed, eta: data.eta });
                 onProgress(data);
@@ -354,7 +372,7 @@ export async function downloadMedia(taskId: string, onProgress: (data: ProgressD
             logger.info({ taskId, candIdx, fallbackUrl: targetUrl }, 'DASH manifest candidate — downloading via ffmpeg');
             tasks.update(taskId, { status: 'downloading', progress: 0 });
             try {
-              const outPath = path.join(config.storagePath, `${taskId}.mp4`);
+              const outPath = await customOutputPath(taskId, task.url);
               const dl = await DashDownloader.run(
                 c.url, c.headers, c.userAgent, c.magnitude?.durationSec || 0, outPath,
                 (data) => {
