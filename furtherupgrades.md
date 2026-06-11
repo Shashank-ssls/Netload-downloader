@@ -12,8 +12,10 @@ writing). Ordered roughly by leverage.
 
 ## The 3 biggest reach limiters (verified gaps)
 
-> **STATUS (updated):** #1 ✅, #5 ✅, #2 ✅, #4 ✅ (commits 5a2db15, 85290de, 411ad8a,
-> be45ff5). #3 (DASH) and the smaller items remain. Next recommended: #3 (DASH).
+> **STATUS (updated):** #1 ✅, #5 ✅, #2 ✅, #4 ✅, #3 ✅ (commits 5a2db15, 85290de,
+> 411ad8a, be45ff5, ba0644f). All 5 of the numbered roadmap items are done; only the
+> #6 structural-player-detection idea + the smaller/opportunistic items remain — do
+> those reactively as real corpus failures surface them.
 
 ### 1. Tier-2 capture is URL-pattern-gated — opaque media URLs slip through entirely  ⭐ deepest fix  ✅ DONE
 - **Where:** `src/extractors/fallbackExtractor.ts:34-49` (`STREAM_URL_PATTERNS`) + the capture
@@ -43,7 +45,7 @@ writing). Ordered roughly by leverage.
   with ffmpeg. Natural successor to the anikage playlist-intercept; covers "video plays but
   nothing downloads."
 
-### 3. DASH (`.mpd`) is detected but never downloaded
+### 3. DASH (`.mpd`) is detected but never downloaded  ✅ DONE
 - **Where:** `.mpd` appears only for scoring + duration probing
   (`fallbackExtractor.ts:197, 393, 566`; `probeDashDuration`). It is never reassembled/downloaded.
 - **Problem:** DASH is the #2 manifest format and common on newer sites; today they fall through.
