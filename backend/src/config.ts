@@ -79,6 +79,15 @@ export const config = {
   // Standard local port is 8191; left empty so it's opt-in.
   flaresolverrUrl: process.env.FLARESOLVERR_URL || '',
   flaresolverrTimeoutMs: Math.max(10, parseInt(process.env.FLARESOLVERR_TIMEOUT_SEC || '60', 10)) * 1000,
+
+  // EXPERIMENTAL, opt-in (USE_REBROWSER=true). Use rebrowser-playwright-core — a
+  // drop-in Playwright that hides the CDP `Runtime.enable` leak modern Cloudflare
+  // Turnstile fingerprints. Default OFF: the latest rebrowser build (1.52) lags our
+  // playwright-core (1.60), so it emits Runtime.evaluate protocol-error noise on
+  // fast-frame-churn pages (CF challenges). Live-tested: it did NOT clear yoyomovies'
+  // Turnstile (still only cf_chl_rc_ni), so it's not worth destabilising the default
+  // path — kept as a lever for when rebrowser catches up / for softer anti-bot sites.
+  useRebrowser: process.env.USE_REBROWSER === 'true',
   logPath: path.resolve(process.env.LOG_PATH || './logs'),
 };
 

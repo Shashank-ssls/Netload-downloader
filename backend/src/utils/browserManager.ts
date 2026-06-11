@@ -21,13 +21,44 @@ const browsersPath = process.env.PLAYWRIGHT_BROWSERS_PATH
 
 process.env.PLAYWRIGHT_BROWSERS_PATH = browsersPath;
 
+// rebrowser-patches' runtime-leak fix mode (how it hides the `Runtime.enable` CDP
+// call). 'addBinding' is the most compatible; set a default before the import reads it.
+if (!process.env.REBROWSER_PATCHES_RUNTIME_FIX_MODE) {
+  process.env.REBROWSER_PATCHES_RUNTIME_FIX_MODE = 'addBinding';
+}
+
 import { chromium as playwrightChromium } from 'playwright-core';
 // @ts-ignore — playwright-extra / stealth plugin ship no bundled type declarations
-import { chromium as stealthChromium } from 'playwright-extra';
+import { chromium as stockStealthChromium, addExtra } from 'playwright-extra';
 // @ts-ignore — playwright-extra / stealth plugin ship no bundled type declarations
 import StealthPlugin from 'puppeteer-extra-plugin-stealth';
 
-stealthChromium.use(StealthPlugin());
+/**
+ * Build the stealth Chromium launcher. When `config.useRebrowser` is on (default),
+ * wrap rebrowser-playwright-core — a drop-in Playwright that hides the CDP
+ * `Runtime.enable` leak that modern Cloudflare Turnstile fingerprints — with the
+ * puppeteer-extra stealth plugin (fingerprint masking). Falls back to stock
+ * playwright-extra if the package is missing or disabled. We still launch OUR
+ * Chromium binary (executablePath below), so no extra browser download is needed.
+ */
+function buildStealthChromium(): typeof stockStealthChromium {
+  if (config.useRebrowser) {
+    try {
+      // eslint-disable-next-line @typescript-eslint/no-require-imports
+      const rebrowserChromium = require('rebrowser-playwright-core').chromium;
+      const ext = addExtra(rebrowserChromium);
+      ext.use(StealthPlugin());
+      logger.info('Browser engine: rebrowser-playwright-core (Runtime.enable leak patched) + stealth');
+      return ext;
+    } catch (err: any) {
+      logger.warn({ err: err.message }, 'rebrowser-playwright-core unavailable — using stock playwright-extra');
+    }
+  }
+  stockStealthChromium.use(StealthPlugin());
+  return stockStealthChromium;
+}
+
+const stealthChromium = buildStealthChromium();
 
 import type { Browser, BrowserContext, Page } from 'playwright-core';
 import type { CapturedStream } from '../types';
