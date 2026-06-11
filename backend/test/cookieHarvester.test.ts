@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { toNetscapeCookies, type PlaywrightCookie } from '../src/utils/cookieHarvester';
+import { toNetscapeCookies, registrableDomain, filterCookiesForHost, type PlaywrightCookie } from '../src/utils/cookieHarvester';
 
 const cookie = (over: Partial<PlaywrightCookie>): PlaywrightCookie => ({
   name: 'sid', value: 'abc', domain: '.example.com', path: '/',
@@ -30,5 +30,30 @@ describe('toNetscapeCookies', () => {
   it('skips cookies with no name', () => {
     const out = toNetscapeCookies([cookie({ name: '' })]);
     expect(out.trim().split('\n').some((l) => l.includes('\t'))).toBe(false);
+  });
+});
+
+describe('registrableDomain', () => {
+  it('reduces a host to its last two labels', () => {
+    expect(registrableDomain('a.b.example.com')).toBe('example.com');
+    expect(registrableDomain('example.com')).toBe('example.com');
+    expect(registrableDomain('.Example.COM')).toBe('example.com');
+  });
+});
+
+describe('filterCookiesForHost (privacy scoping)', () => {
+  const c = (domain: string): PlaywrightCookie => cookie({ domain, name: 'x', value: 'y' });
+
+  it('keeps the site own + subdomain cookies, drops third-party/tracker cookies', () => {
+    const kept = filterCookiesForHost(
+      [c('.example.com'), c('cdn.example.com'), c('.doubleclick.net'), c('tracker.ads.io')],
+      'example.com',
+    );
+    expect(kept.map((k) => k.domain)).toEqual(['.example.com', 'cdn.example.com']);
+  });
+
+  it('matches the exact page host even on a deep subdomain', () => {
+    const kept = filterCookiesForHost([c('watch.site.tv'), c('.site.tv'), c('evil.com')], 'watch.site.tv');
+    expect(kept.map((k) => k.domain)).toEqual(['watch.site.tv', '.site.tv']);
   });
 });

@@ -27,6 +27,10 @@ export const config = {
   // segment stitch, MSE, DASH pre-check, diagnose, CF harvest) opens one; this
   // caps total so a queue of downloads can't exhaust memory with rendered pages.
   maxBrowserContexts: Math.max(1, parseInt(process.env.MAX_BROWSER_CONTEXTS || '3', 10)),
+  // Max simultaneous downloads targeting the SAME host — politeness so a burst of
+  // same-site tasks can't get the IP rate-limited/banned (which kills every site
+  // on that CDN, not just one).
+  maxPerHostConcurrent: Math.max(1, parseInt(process.env.MAX_PER_HOST_CONCURRENT || '2', 10)),
 
   // Watchdog stall ceilings: a spawned ffmpeg/yt-dlp is killed (process tree) if it
   // emits NO output for this long — catches true hangs (dead sockets) without

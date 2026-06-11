@@ -27,6 +27,29 @@ export interface PlaywrightCookie {
   secure: boolean;
 }
 
+/** Registrable-ish domain: the last two labels (e.g. a.b.example.com → example.com).
+ *  A heuristic (no public-suffix list), good enough to scope cookies to the site. */
+export function registrableDomain(host: string): string {
+  const h = host.replace(/^\./, '').toLowerCase();
+  const labels = h.split('.');
+  return labels.length <= 2 ? h : labels.slice(-2).join('.');
+}
+
+/**
+ * Keep only cookies belonging to the page's own site, dropping unrelated
+ * third-party/ad/tracker cookies. Avoids writing a pile of someone else's session
+ * cookies to disk (privacy) and keeps the per-site file lean. Pure — unit-tested.
+ */
+export function filterCookiesForHost(cookies: PlaywrightCookie[], host: string): PlaywrightCookie[] {
+  const reg = registrableDomain(host);
+  const h = host.replace(/^\./, '').toLowerCase();
+  return cookies.filter((c) => {
+    const cd = (c.domain || '').replace(/^\./, '').toLowerCase();
+    if (!cd) return false;
+    return cd === h || cd === reg || cd.endsWith('.' + reg);
+  });
+}
+
 /**
  * Convert Playwright cookies to the Netscape `cookies.txt` format yt-dlp reads.
  * Columns: domain, includeSubdomains, path, secure, expiry, name, value (tabs).
@@ -63,12 +86,14 @@ export class CookieHarvester {
       const file = path.join(config.cookiesDir, `${host}.txt`);
       if (fs.existsSync(file)) return false; // don't clobber a manual/earlier export
 
-      const cookies = (await context.cookies()) as PlaywrightCookie[];
-      if (!cookies || cookies.length === 0) return false;
+      const all = (await context.cookies()) as PlaywrightCookie[];
+      // Scope to the site's own cookies — never persist third-party/tracker cookies.
+      const cookies = filterCookiesForHost(all || [], host);
+      if (cookies.length === 0) return false;
 
       fs.mkdirSync(config.cookiesDir, { recursive: true });
       fs.writeFileSync(file, toNetscapeCookies(cookies), 'utf8');
-      logger.info({ host, count: cookies.length, file }, 'Harvested stealth-browser cookies for site');
+      logger.info({ host, count: cookies.length, dropped: (all?.length || 0) - cookies.length, file }, 'Harvested stealth-browser cookies for site');
       return true;
     } catch (err: any) {
       logger.warn({ err: err.message }, 'Cookie harvest failed (continuing)');

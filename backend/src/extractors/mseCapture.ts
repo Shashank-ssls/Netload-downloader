@@ -51,6 +51,9 @@ const MIN_TOTAL_BYTES = 512 * 1024;
 const MIN_APPENDS = 3;
 // Hard ceiling so a misbehaving page can't fill the disk.
 const MAX_TOTAL_BYTES = 6 * 1024 * 1024 * 1024;
+// A real MSE stream has a handful of SourceBuffers (video/audio/maybe a couple);
+// cap distinct track ids so a hostile page can't grow the map unboundedly.
+const MAX_TRACKS = 16;
 // Output shorter than this fraction of the player-reported duration = partial.
 const COMPLETE_COVERAGE_RATIO = 0.9;
 
@@ -150,11 +153,15 @@ export class MseCapturer {
       // order, so arrival order == append order (we still flag any seq gap).
       await page.exposeBinding('__mseSink', (_src, payload: SinkPayload) => {
         try {
+          // Validate the page-controlled payload shape before trusting it.
           if (capped || !payload || typeof payload.b64 !== 'string') return;
+          if (typeof payload.id !== 'number' || !Number.isInteger(payload.id) || payload.id < 0 || payload.id >= MAX_TRACKS) return;
+          if (typeof payload.seq !== 'number' || !Number.isInteger(payload.seq) || payload.seq < 0) return;
           const buf = Buffer.from(payload.b64, 'base64');
           if (buf.length === 0) return;
           let t = tracks.get(payload.id);
           if (!t) {
+            if (tracks.size >= MAX_TRACKS) return; // refuse to grow past the cap
             const file = path.join(tmpDir, `track_${payload.id}.mp4`);
             t = {
               id: payload.id, mime: payload.mime || '', file,

@@ -20,6 +20,8 @@ import { PlaylistExpander } from './extractors/playlistExpander';
 import { Diagnostics } from './extractors/diagnostics';
 import { getBinaryVersions, safeUpdateYtdlp } from './utils/binaryVersions';
 import { YtdlpUpdater } from './utils/ytdlpUpdater';
+import { Metrics } from './utils/metrics';
+import { HostThrottle } from './utils/hostThrottle';
 import { SsrfGuard } from './utils/ssrfGuard';
 import { apiTokenMiddleware, rateLimiter } from './middleware/security';
 
@@ -59,6 +61,8 @@ app.get('/api/health', (_req, res) => {
     binaries: getBinaryVersions(),
     queue: QueueManager.getStats(),
     browser: BrowserManager.stats(),
+    hosts: HostThrottle.stats(),
+    providerMetrics: Metrics.snapshot(),
     tasks: tasks.statusCounts(),
   });
 });
