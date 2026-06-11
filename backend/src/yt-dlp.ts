@@ -2,6 +2,7 @@ import { spawn, ChildProcess } from 'child_process';
 import { config } from './config';
 import { ProgressData, MetadataInfo } from './types';
 import logger from './logger';
+import { armWatchdog } from './utils/processWatchdog';
 import fs from 'fs';
 
 export interface YTDLPOptions {
@@ -55,6 +56,10 @@ export class YTDLPProcessManager {
 
       const child = spawn(config.ytdlpPath, finalArgs, { env });
       this.activeProcesses.set(id, child);
+
+      // Kill a yt-dlp (and its child ffmpeg) that goes silent for too long — a
+      // genuine hang, since a healthy run streams progress lines continuously.
+      const wd = armWatchdog(child, { stallMs: config.ytdlpStallMs, label: `yt-dlp:${id}` });
 
       let stdoutAccumulator = '';
       let lineBuffer = '';
@@ -116,6 +121,7 @@ export class YTDLPProcessManager {
       };
 
       child.stdout.on('data', (chunk: Buffer) => {
+        wd.kick();
         lineBuffer += chunk.toString();
         const lines = lineBuffer.split('\n');
         lineBuffer = lines.pop() ?? '';
@@ -125,15 +131,19 @@ export class YTDLPProcessManager {
       });
 
       child.stderr.on('data', (data: Buffer) => {
+        wd.kick();
         if (options.onStderr) options.onStderr(data.toString());
       });
 
       child.on('close', (code) => {
+        wd.disarm();
         if (lineBuffer.trim()) processLine(lineBuffer);
         lineBuffer = '';
         this.activeProcesses.delete(id);
 
-        if (code === 0 || code === null) {
+        if (wd.timedOut()) {
+          reject(new Error(`yt-dlp timed out (no output for ${config.ytdlpStallMs}ms)`));
+        } else if (code === 0 || code === null) {
           resolve({ code: code || 0, stdout: stdoutAccumulator });
         } else {
           reject(new Error(`yt-dlp exited with code ${code}`));
@@ -141,6 +151,7 @@ export class YTDLPProcessManager {
       });
 
       child.on('error', (err) => {
+        wd.disarm();
         this.activeProcesses.delete(id);
         reject(err);
       });

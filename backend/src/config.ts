@@ -28,6 +28,12 @@ export const config = {
   // caps total so a queue of downloads can't exhaust memory with rendered pages.
   maxBrowserContexts: Math.max(1, parseInt(process.env.MAX_BROWSER_CONTEXTS || '3', 10)),
 
+  // Watchdog stall ceilings: a spawned ffmpeg/yt-dlp is killed (process tree) if it
+  // emits NO output for this long — catches true hangs (dead sockets) without
+  // killing a legitimately long download, which keeps emitting progress.
+  ffmpegStallMs: Math.max(10, parseInt(process.env.FFMPEG_STALL_SEC || '120', 10)) * 1000,
+  ytdlpStallMs: Math.max(10, parseInt(process.env.YTDLP_STALL_SEC || '180', 10)) * 1000,
+
   // yt-dlp freshness. yt-dlp ships new/fixed extractors almost daily, so a stale
   // binary silently loses reach — we self-update on startup (throttled) + weekly.
   // YTDLP_AUTO_UPDATE=false disables it. YTDLP_CHANNEL = stable | nightly | master

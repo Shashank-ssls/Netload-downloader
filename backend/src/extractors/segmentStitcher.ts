@@ -30,6 +30,7 @@ import { config } from '../config';
 import { BrowserManager } from '../utils/browserManager';
 import { BrowserHelpers } from '../utils/browserHelpers';
 import { FileValidator } from '../utils/validators';
+import { armWatchdog } from '../utils/processWatchdog';
 import { FallbackExtractor } from './fallbackExtractor';
 import type { ProgressData, CapturedStream } from '../types';
 import type { Page } from 'playwright-core';
@@ -634,8 +635,10 @@ export class SegmentStitcher {
   ): Promise<void> {
     return new Promise((resolve, reject) => {
       const child = spawn(ffmpeg, args);
+      const wd = armWatchdog(child, { stallMs: config.ffmpegStallMs, label: 'ffmpeg-run' });
       let tail = '';
       child.stderr.on('data', (d) => {
+        wd.kick();
         tail = (tail + d.toString()).slice(-4000);
         const m = tail.match(/time=(\d+):(\d+):(\d+(?:\.\d+)?)/g);
         if (m && durationSec > 0) {
@@ -647,9 +650,11 @@ export class SegmentStitcher {
           }
         }
       });
-      child.on('error', reject);
+      child.on('error', (err) => { wd.disarm(); reject(err); });
       child.on('close', (code) => {
-        if (code === 0) resolve();
+        wd.disarm();
+        if (wd.timedOut()) reject(new Error(`ffmpeg stalled (no output for ${config.ffmpegStallMs}ms): ${tail.slice(-200)}`));
+        else if (code === 0) resolve();
         else reject(new Error(`ffmpeg HLS exited ${code}: ${tail.slice(-500)}`));
       });
     });
@@ -783,11 +788,14 @@ export class SegmentStitcher {
 
     return new Promise((resolve, reject) => {
       const child = spawn(ffmpeg, args, { cwd });
+      const wd = armWatchdog(child, { stallMs: config.ffmpegStallMs, label: 'ffmpeg-concat' });
       let stderr = '';
-      child.stderr.on('data', d => { stderr += d.toString(); });
-      child.on('error', reject);
+      child.stderr.on('data', d => { wd.kick(); stderr += d.toString(); });
+      child.on('error', (err) => { wd.disarm(); reject(err); });
       child.on('close', code => {
-        if (code === 0) resolve();
+        wd.disarm();
+        if (wd.timedOut()) reject(new Error(`ffmpeg concat stalled (no output for ${config.ffmpegStallMs}ms): ${stderr.slice(-200)}`));
+        else if (code === 0) resolve();
         else reject(new Error(`ffmpeg concat exited ${code}: ${stderr.slice(-500)}`));
       });
     });
