@@ -124,7 +124,7 @@ export function deriveHints(r: Omit<DiagnosticReport, 'hints'>): string[] {
   if (challenge === 'turnstile' || challenge === 'hcaptcha' || challenge === 'recaptcha') {
     const nice = challenge === 'turnstile' ? 'Cloudflare Turnstile' : challenge === 'hcaptcha' ? 'hCaptcha' : 'reCAPTCHA';
     const flare = challenge === 'turnstile'
-      ? ' For a Turnstile managed challenge that even a headed browser cannot pass, set FLARESOLVERR_URL — its undetected browser clears it automatically on retry.'
+      ? ' (FlareSolverr/FLARESOLVERR_URL clears plain "Just a moment" CF challenges automatically, but generally NOT interactive Turnstile — for that, netload login or a paid CAPTCHA_SOLVER_CMD is the path.)'
       : '';
     hints.push(`${nice} interactive captcha is blocking the page — solve it ONCE with \`netload login <url>\` (the cleared session is reused), or configure CAPTCHA_SOLVER_CMD.${flare}`);
   } else if (media.length === 0 && r.page.appendBufferCount === 0 && !blobVideo) {

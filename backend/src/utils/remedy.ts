@@ -28,7 +28,10 @@ export function suggestRemedy(task: SettledTask): string | null {
     return `Gated preview — run: netload login ${host}   (or add cookies/${host}.txt) for the full video`;
   }
   if (task.error === 'CLOUDFLARE_BLOCKED') {
-    return `Cloudflare blocked — run: netload login ${host}   to clear it once (then it's reused), or set FLARESOLVERR_URL to clear Turnstile automatically`;
+    // Reaching here means automatic recovery (stealth browser, and FlareSolverr if
+    // configured) already failed — i.e. an interactive Turnstile wall, not a plain
+    // CF challenge. Solving it once interactively is the reliable fix.
+    return `Cloudflare blocked — run: netload login ${host}   to solve it once (then it's reused). A plain CF challenge auto-recovers, so this is an interactive Turnstile wall.`;
   }
   if (task.error === 'DRM_PROTECTED') {
     return 'DRM-protected — cannot be downloaded';
