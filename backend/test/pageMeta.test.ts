@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { cleanTitle, sanitizeFilename, extractMeta, extractImageUrlFromText, PageMeta } from '../src/utils/pageMeta';
+import { cleanTitle, sanitizeFilename, extractMeta, extractImageUrlFromText, pickImageUrl, PageMeta } from '../src/utils/pageMeta';
 
 describe('cleanTitle', () => {
   it('strips a "Watch on <site>" suffix (the anikage case)', () => {
@@ -29,6 +29,21 @@ describe('extractImageUrlFromText', () => {
     expect(extractImageUrlFromText('foo=https://cdn/x.jpg?w=100&h=2 bar')).toBe('https://cdn/x.jpg?w=100&h=2');
     expect(extractImageUrlFromText('https://site/video/abc.m3u8')).toBe('');
     expect(extractImageUrlFromText('')).toBe('');
+  });
+});
+
+describe('pickImageUrl', () => {
+  it('pulls the inner image out of an og:image wrapper page (the hanime omni-player case)', () => {
+    expect(pickImageUrl('https://hanime.tv/omni-player/index.html?poster_url=https://hanime-cdn.com/images/posters/kegareboshi-aka-pv1.webp'))
+      .toBe('https://hanime-cdn.com/images/posters/kegareboshi-aka-pv1.webp');
+  });
+  it('returns a direct image URL as-is and keeps an extensionless plain URL', () => {
+    expect(pickImageUrl('https://cdn/x.jpg')).toBe('https://cdn/x.jpg');
+    expect(pickImageUrl('https://cdn/image/12345')).toBe('https://cdn/image/12345');
+  });
+  it('drops a non-image wrapper/page URL with no embedded image', () => {
+    expect(pickImageUrl('https://site/player/index.html?id=abc')).toBe('');
+    expect(pickImageUrl('')).toBe('');
   });
 });
 

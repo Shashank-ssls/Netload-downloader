@@ -182,7 +182,7 @@ export class YTDLPProcessManager {
     if (stderr.includes('429') || stderr.includes('Rate-limited') || stderr.includes('Too Many Requests')) return 'RATE_LIMITED';
     if (stderr.includes('Geo-restrict') || stderr.includes('not available in your country') || stderr.includes('geo')) return 'GEO_BLOCKED';
     if (stderr.includes('Timed out') || stderr.includes('timed out') || stderr.includes('Connection timeout')) return 'NETWORK_TIMEOUT';
-    if (stderr.includes('ConnectionResetError') || stderr.includes('Connection aborted') || stderr.includes('10054') || stderr.includes('RemoteDisconnected') || stderr.includes('Connection reset')) return 'CONNECTION_RESET';
+    if (stderr.includes('ConnectionResetError') || stderr.includes('Connection aborted') || stderr.includes('10054') || stderr.includes('RemoteDisconnected') || stderr.includes('Connection reset') || stderr.includes('Connection was reset') || stderr.includes('Recv failure') || stderr.includes('Send failure') || /curl: \((35|52|56)\)/.test(stderr)) return 'CONNECTION_RESET';
     if (stderr.includes('Cloudflare') || stderr.includes('403: Forbidden') || stderr.includes('HTTP Error 403') || stderr.includes('cf-browser-verification') || stderr.includes('Just a moment') || stderr.includes('Enable JavaScript and cookies')) return 'CLOUDFLARE_BLOCKED';
     if (stderr.includes('Requested format is not available') || stderr.includes('format is not available')) return 'FORMAT_UNAVAILABLE';
     if (stderr.includes('Video unavailable') || stderr.includes('This video is unavailable') || stderr.includes('has been removed')) return 'VIDEO_UNAVAILABLE';

@@ -54,8 +54,25 @@ export function extractImageUrlFromText(text: string): string {
   if (!text) return '';
   let decoded = text;
   try { decoded = decodeURIComponent(text); } catch { /* keep raw on malformed % */ }
-  const m = /https?:\/\/[^\s,'"<>()]+\.(?:webp|jpe?g|png|gif)(?:\?[^\s,'"<>()]*)?/i.exec(decoded);
+  // Tempered greedy token `(?:(?!https?:\/\/)…)` stops a match before a NESTED
+  // https:// so a wrapper URL (`.../index.html?poster_url=https://cdn/x.webp`)
+  // yields the inner image, not the whole wrapper ending in .webp.
+  const m = /https?:\/\/(?:(?!https?:\/\/)[^\s,'"<>()])+\.(?:webp|jpe?g|png|gif)(?:\?[^\s,'"<>()]*)?/i.exec(decoded);
   return m ? m[0] : '';
+}
+
+/**
+ * Normalise a thumbnail candidate to a usable image URL. og:image is sometimes a
+ * wrapper page that embeds the real image as a query param (e.g. hanime's
+ * `.../omni-player/index.html?poster_url=https://cdn/.../x.webp`) — pull the inner
+ * image out. A direct image URL is returned as-is; an extensionless http(s) URL with
+ * no query is kept as a best-effort image; anything else → ''. Pure — unit-tested.
+ */
+export function pickImageUrl(raw: string): string {
+  if (!raw) return '';
+  const embedded = extractImageUrlFromText(raw); // finds an image-extension URL inside
+  if (embedded) return embedded;
+  return /^https?:\/\//.test(raw) && !/[?&]/.test(raw) ? raw : '';
 }
 
 /** Extract title + thumbnail from page HTML (OG tags first, then twitter, then

@@ -121,6 +121,17 @@ export async function analyzeUrl(url: string): Promise<AnalysisResult> {
         }
       }
 
+      // A transient connection blip on the NATIVE extractor (reset / rate-limit)
+      // should be retried natively BEFORE resorting to Tier-2 capture — on an
+      // ad-heavy page (e.g. pornhub) the fallback can otherwise grab an on-page ad
+      // clip and mislabel the real video as a "preview". Only while still on the
+      // original URL (we haven't switched to a captured fallback yet).
+      if (['CONNECTION_RESET', 'RATE_LIMITED'].includes(errorType) && targetUrl === url && attempt < maxRetries) {
+        logger.info({ url, errorType, attempt }, 'Transient native error — retrying native extractor before fallback');
+        await CloudflareRecoveryManager.waitCooldown(attempt);
+        continue;
+      }
+
       if ((CloudflareRecoveryManager.isRecoverable(errorType) || errorType === 'UNSUPPORTED_URL' || errorType === 'DYNAMIC_CONTENT_UNSUPPORTED') && attempt < maxRetries) {
         logger.info({ url: targetUrl, errorType }, 'Analysis trying fallback extraction...');
         const captured = await FallbackExtractor.extractMediaUrl(targetUrl, provider.name);

@@ -34,6 +34,12 @@ describe('YTDLPProcessManager.classifyError', () => {
     expect(classify('RemoteDisconnected: Remote end closed connection')).toBe('CONNECTION_RESET');
   });
 
+  it('maps curl/SSL transient connection failures (the pornhub cold-start flake)', () => {
+    expect(classify('ERROR: [PornHub] x: Unable to download webpage: Failed to perform, curl: (35) Recv failure: Connection was reset')).toBe('CONNECTION_RESET');
+    expect(classify('curl: (56) Recv failure')).toBe('CONNECTION_RESET');
+    expect(classify('curl: (52) Empty reply from server')).toBe('CONNECTION_RESET');
+  });
+
   it('maps Cloudflare / 403', () => {
     expect(classify('Just a moment... cf-browser-verification')).toBe('CLOUDFLARE_BLOCKED');
     expect(classify('HTTP Error 403: Forbidden')).toBe('CLOUDFLARE_BLOCKED');

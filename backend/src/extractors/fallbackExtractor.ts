@@ -24,7 +24,7 @@ import { BrowserManager } from '../utils/browserManager';
 import { BrowserHelpers } from '../utils/browserHelpers';
 import { CookieHarvester, registrableDomain } from '../utils/cookieHarvester';
 import { BrowserProfiles } from '../utils/browserProfiles';
-import { PageMeta, extractImageUrlFromText } from '../utils/pageMeta';
+import { PageMeta, extractImageUrlFromText, pickImageUrl } from '../utils/pageMeta';
 import type { CapturedStream, StreamMagnitude } from '../types';
 import type { Page, Response as PlaywrightResponse } from 'playwright-core';
 import { classifyContentType, classifyBytes, type MediaKind } from './mediaSignature';
@@ -695,8 +695,10 @@ export class FallbackExtractor {
       const info = await readFrame(frame);
       if (!title && info.title) title = info.title;            // main frame is first → its title wins
       if (!thumbnail && sameSite) {
-        if (/^https?:\/\//.test(info.thumbnail)) thumbnail = info.thumbnail;
-        else thumbnail = extractImageUrlFromText(fUrl);        // poster embedded in the player-frame URL
+        // og:image may be a direct image, OR a wrapper URL embedding the image
+        // (e.g. hanime's omni-player .../index.html?poster_url=<img>) → normalise it;
+        // failing that, a poster embedded in the player-frame URL itself.
+        thumbnail = pickImageUrl(info.thumbnail) || extractImageUrlFromText(fUrl);
       }
       if (title && thumbnail) break;
     }
