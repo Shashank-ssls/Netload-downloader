@@ -12,10 +12,10 @@ writing). Ordered roughly by leverage.
 
 ## The 3 biggest reach limiters (verified gaps)
 
-> **STATUS (updated):** #1 ✅, #5 ✅, #2 ✅, #4 ✅, #3 ✅ (commits 5a2db15, 85290de,
-> 411ad8a, be45ff5, ba0644f). All 5 of the numbered roadmap items are done; only the
-> #6 structural-player-detection idea + the smaller/opportunistic items remain — do
-> those reactively as real corpus failures surface them.
+> **STATUS (updated):** #1 ✅, #5 ✅, #2 ✅, #4 ✅, #3 ✅, #6 ✅ (commits 5a2db15,
+> 85290de, 411ad8a, be45ff5, ba0644f, 7f30fce). All six numbered roadmap items are
+> done; only the smaller/opportunistic items below remain — do those reactively as
+> real corpus failures surface them.
 
 ### 1. Tier-2 capture is URL-pattern-gated — opaque media URLs slip through entirely  ⭐ deepest fix  ✅ DONE
 - **Where:** `src/extractors/fallbackExtractor.ts:34-49` (`STREAM_URL_PATTERNS`) + the capture
@@ -77,7 +77,7 @@ writing). Ordered roughly by leverage.
 - **Shape:** a `netload diagnose <url>` CLI subcommand + `POST /api/diagnose` returning the report
   JSON (reuse the Tier-2 browser plumbing, just log instead of filter).
 
-### 6. Structural embed/player detection (beyond the hostname list)
+### 6. Structural embed/player detection (beyond the hostname list)  ✅ DONE
 - **Where:** `KNOWN_EMBEDDER_HOSTNAMES` in `fallbackExtractor.ts` is a hardcoded allowlist.
 - **Fix:** detect a frame as a *player frame* by **structure** — contains a `<video>`, emits
   stream traffic, or exposes known player globals (`jwplayer`, `videojs`, `Hls`, `dashjs`, `Plyr`)
