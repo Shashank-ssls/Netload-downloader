@@ -31,6 +31,17 @@ function isDirectStream(url: string): boolean {
   return DIRECT_STREAM_PATTERNS.some(p => p.test(url));
 }
 
+/**
+ * Verify a freshly muxed output (MSE/DASH/segment remux) is a readable container
+ * with a real video stream — not a plausible-sized but broken file. Logs why on
+ * failure so the downloader can discard it and fall through to the next source.
+ */
+function passesIntegrity(taskId: string, filePath: string): boolean {
+  const res = FileValidator.checkPlayable(filePath, { requireVideo: true });
+  if (!res.ok) logger.warn({ taskId, filePath, reason: res.reason }, 'Mux output failed integrity check — discarding');
+  return res.ok;
+}
+
 export async function downloadMedia(taskId: string, onProgress: (data: ProgressData) => void): Promise<string> {
   const task = tasks.getById(taskId);
   if (!task) throw new Error('TASK_NOT_FOUND');
@@ -270,7 +281,7 @@ export async function downloadMedia(taskId: string, onProgress: (data: ProgressD
                 tasks.update(taskId, { progress: data.progress, filesize: data.size, speed: data.speed, eta: data.eta });
                 onProgress(data);
               });
-              if (stitched && FileValidator.isContentSane(stitched.path, { minBytes: BYTES_FLOOR, minDurationSec: DURATION_FLOOR_SEC })) {
+              if (stitched && FileValidator.isContentSane(stitched.path, { minBytes: BYTES_FLOOR, minDurationSec: DURATION_FLOOR_SEC }) && passesIntegrity(taskId, stitched.path)) {
                 FileValidator.validate(stitched.path);
                 tasks.update(taskId, {
                   status: 'completed', progress: 100, path: stitched.path,
@@ -304,7 +315,7 @@ export async function downloadMedia(taskId: string, onProgress: (data: ProgressD
                 tasks.update(taskId, { progress: data.progress, filesize: data.size, speed: data.speed, eta: data.eta });
                 onProgress(data);
               });
-              if (captured && FileValidator.isContentSane(captured.path, { minBytes: BYTES_FLOOR, minDurationSec: DURATION_FLOOR_SEC })) {
+              if (captured && FileValidator.isContentSane(captured.path, { minBytes: BYTES_FLOOR, minDurationSec: DURATION_FLOOR_SEC }) && passesIntegrity(taskId, captured.path)) {
                 FileValidator.validate(captured.path);
                 tasks.update(taskId, {
                   status: 'completed', progress: 100, path: captured.path,
@@ -351,7 +362,7 @@ export async function downloadMedia(taskId: string, onProgress: (data: ProgressD
                   onProgress(data);
                 },
               );
-              if (dl && FileValidator.isContentSane(dl.path, { minBytes: BYTES_FLOOR, minDurationSec: DURATION_FLOOR_SEC })) {
+              if (dl && FileValidator.isContentSane(dl.path, { minBytes: BYTES_FLOOR, minDurationSec: DURATION_FLOOR_SEC }) && passesIntegrity(taskId, dl.path)) {
                 FileValidator.validate(dl.path);
                 tasks.update(taskId, {
                   status: 'completed', progress: 100, path: dl.path,
