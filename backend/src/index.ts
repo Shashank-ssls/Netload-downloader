@@ -58,6 +58,7 @@ app.get('/api/health', (_req, res) => {
     version: '1.0.0',
     binaries: getBinaryVersions(),
     queue: QueueManager.getStats(),
+    browser: BrowserManager.stats(),
     tasks: tasks.statusCounts(),
   });
 });

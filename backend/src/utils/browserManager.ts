@@ -10,6 +10,8 @@
 
 import path from 'path';
 import logger from '../logger';
+import { config } from '../config';
+import { Semaphore } from './semaphore';
 
 // CRITICAL: Resolve and force-set browser path before any playwright import
 const browsersPath = process.env.PLAYWRIGHT_BROWSERS_PATH
@@ -34,6 +36,10 @@ export { CapturedStream };
 export class BrowserManager {
   private static browser: Browser | null = null;
   private static launchPromise: Promise<Browser> | null = null;
+  // Caps simultaneous contexts so a queue of downloads can't launch enough
+  // heavy rendered pages to exhaust memory. Permit is acquired in newContext()
+  // and released when the context closes.
+  private static readonly contextLimiter = new Semaphore(config.maxBrowserContexts);
 
   static async getBrowser(): Promise<Browser> {
     if (this.launchPromise) return this.launchPromise;
@@ -74,25 +80,56 @@ export class BrowserManager {
   }
 
   /**
-   * Returns a fresh isolated browser context (like a private window).
-   * ALWAYS call context.close() when done with it.
+   * Returns a fresh isolated browser context (like a private window), once a
+   * concurrency permit is free. ALWAYS call context.close() when done — the permit
+   * is released automatically on the context's 'close' event, so a queued caller
+   * can proceed. If the limit is reached, this awaits until a context closes.
    */
   static async newContext(): Promise<BrowserContext> {
-    const browser = await this.getBrowser();
-    return browser.newContext({
-      viewport: { width: 1920, height: 1080 },
-      userAgent: 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36',
-      locale: 'en-US',
-      timezoneId: 'America/New_York',
-      colorScheme: 'light',
-      extraHTTPHeaders: {
-        'Accept-Language': 'en-US,en;q=0.9',
-        'Accept-Encoding': 'gzip, deflate, br',
-        'Sec-CH-UA': '"Chromium";v="124", "Google Chrome";v="124", "Not=A?Brand";v="99"',
-        'Sec-CH-UA-Mobile': '?0',
-        'Sec-CH-UA-Platform': '"Windows"',
-      },
+    await this.contextLimiter.acquire();
+    if (this.contextLimiter.waiting > 0) {
+      logger.info(this.stats(), 'Browser context limit reached — callers queued');
+    }
+
+    let context: BrowserContext;
+    try {
+      const browser = await this.getBrowser();
+      context = await browser.newContext({
+        viewport: { width: 1920, height: 1080 },
+        userAgent: 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36',
+        locale: 'en-US',
+        timezoneId: 'America/New_York',
+        colorScheme: 'light',
+        extraHTTPHeaders: {
+          'Accept-Language': 'en-US,en;q=0.9',
+          'Accept-Encoding': 'gzip, deflate, br',
+          'Sec-CH-UA': '"Chromium";v="124", "Google Chrome";v="124", "Not=A?Brand";v="99"',
+          'Sec-CH-UA-Mobile': '?0',
+          'Sec-CH-UA-Platform': '"Windows"',
+        },
+      });
+    } catch (err) {
+      this.contextLimiter.release(); // never leak a permit if creation fails
+      throw err;
+    }
+
+    // Release exactly once, whether the caller closes it or the browser does.
+    let released = false;
+    context.once('close', () => {
+      if (released) return;
+      released = true;
+      this.contextLimiter.release();
     });
+    return context;
+  }
+
+  /** Concurrency snapshot for observability (surfaced in /api/health). */
+  static stats(): { contextsInUse: number; contextsMax: number; contextsWaiting: number } {
+    return {
+      contextsInUse: this.contextLimiter.inUse,
+      contextsMax: this.contextLimiter.capacity,
+      contextsWaiting: this.contextLimiter.waiting,
+    };
   }
 
   static async shutdown(): Promise<void> {

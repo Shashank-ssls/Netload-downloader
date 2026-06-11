@@ -23,6 +23,10 @@ export const config = {
   minFreeSpaceMB: parseInt(process.env.MIN_FREE_SPACE_MB || '500', 10),
   // Concurrency for segment-stitch downloads (gentle by default to avoid proxy throttling).
   segmentConcurrency: parseInt(process.env.SEGMENT_CONCURRENCY || '3', 10),
+  // Max simultaneous stealth-Chromium contexts. Every extraction path (Tier 2,
+  // segment stitch, MSE, DASH pre-check, diagnose, CF harvest) opens one; this
+  // caps total so a queue of downloads can't exhaust memory with rendered pages.
+  maxBrowserContexts: Math.max(1, parseInt(process.env.MAX_BROWSER_CONTEXTS || '3', 10)),
 
   // yt-dlp freshness. yt-dlp ships new/fixed extractors almost daily, so a stale
   // binary silently loses reach — we self-update on startup (throttled) + weekly.
