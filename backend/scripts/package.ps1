@@ -52,25 +52,40 @@ if (-not (Test-Path $csc)) { $csc = "$env:WINDIR\Microsoft.NET\Framework\v4.0.30
 if ($LASTEXITCODE -ne 0) { throw 'launcher compile failed' }
 
 Write-Host '[8/8] Writing README...'
-@'
-netload — portable video downloader
+$readme = @'
+netload - portable video downloader
+===================================
 
-HOW TO USE
-  1. Double-click  netload.exe
-  2. Paste a video link at the  link>  prompt and press Enter.
-  3. The file is saved into the  downloads\  folder next to this exe.
+DOWNLOAD & RUN
+  1. Download  netload-portable.zip  (from the GitHub "Releases" page of the repo,
+     or wherever the file was shared with you).
+  2. Right-click the zip  ->  "Extract All..."  ->  choose a folder (e.g. Desktop).
+     IMPORTANT: extract the WHOLE folder first. Do NOT run netload.exe from inside
+     the zip preview - it will not work.
+  3. Open the extracted  netload-portable  folder and double-click  netload.exe.
+     First run only: if Windows SmartScreen shows a blue "Windows protected your PC"
+     box, click  "More info"  ->  "Run anyway"  (the app is just unsigned, not unsafe).
+  4. At the  link>  prompt, paste a video link and press Enter.
+     Your file is saved into the  downloads\  folder next to netload.exe.
   Type  q  (or press Enter on a blank line) to quit.
 
 ONE-OFF / SCRIPTED
   netload.exe "https://site/video"           download one link and exit
-  netload.exe "https://site/video" --audio   audio-only (mp3)
+  netload.exe "https://site/video" --audio   audio only (mp3)
+
+REQUIREMENTS
+  • Windows 10 or 11, 64-bit.
+  • About 1.5 GB free disk space (the app folder is ~1.3 GB).
+  • An internet connection.
 
 NOTES
   • Everything stays inside this folder (downloads, cookies, logins, logs in data\).
-  • Move/copy the whole folder anywhere — it is fully self-contained.
-  • Some login-gated sites need a one-time sign-in; see data\logs if a download
-    only returns a short preview.
-'@ | Set-Content -Encoding UTF8 "$bundle\README.txt"
+  • Move or copy the whole folder anywhere - it is fully self-contained, no install.
+  • Some login-gated sites only give a short preview until you sign in once.
+    If a download says "short preview", that site needs a login this build cannot do
+    interactively yet.
+'@
+Set-Content -Encoding UTF8 -Path "$bundle\README.txt" -Value $readme
 
 $sizeGB = [math]::Round((Get-ChildItem $bundle -Recurse -File | Measure-Object Length -Sum).Sum / 1GB, 2)
 Write-Host "Done: $bundle  ($sizeGB GB)"
