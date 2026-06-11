@@ -13,6 +13,7 @@
 import logger from '../logger';
 import { BrowserManager } from '../utils/browserManager';
 import { BrowserHelpers } from '../utils/browserHelpers';
+import { BrowserProfiles } from '../utils/browserProfiles';
 
 export interface CloudflareTokens {
   cfClearance: string;
@@ -30,7 +31,7 @@ export class CloudflareRecoveryManager {
 
     try {
       logger.info({ url }, 'Starting CF clearance harvest...');
-      context = await BrowserManager.newContext();
+      context = await BrowserManager.newContext({ url }); // reuse a prior session if any
       page = await context.newPage();
 
       // Warm-up: hit the domain root to establish a base CF session
@@ -62,6 +63,8 @@ export class CloudflareRecoveryManager {
       }
 
       const userAgent = await page.evaluate(() => navigator.userAgent);
+      // Persist the cleared session so the next run reuses it instead of re-solving.
+      await BrowserProfiles.save(context, url).catch(() => {});
       logger.info({ url, cookie: cfClearance.substring(0, 20) + '...' }, 'CF clearance harvested');
       return { cfClearance, userAgent };
 

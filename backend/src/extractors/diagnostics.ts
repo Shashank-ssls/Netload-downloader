@@ -147,7 +147,7 @@ export class Diagnostics {
 
     try {
       logger.info({ url }, 'Diagnose: opening page for full inspection');
-      context = await BrowserManager.newContext();
+      context = await BrowserManager.newContext({ url });
       page = await context.newPage();
 
       // In-page probe: record MSE/Blob activity that never touches the network.

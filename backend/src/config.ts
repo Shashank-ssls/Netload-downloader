@@ -15,6 +15,10 @@ export const config = {
   cookiesPath: path.resolve(process.env.COOKIES_PATH || './cookies/cookies.txt'),
   // Per-site cookies live here as `<host>.txt` (falls back to cookiesPath).
   cookiesDir: path.resolve(process.env.COOKIES_DIR || './cookies'),
+  // Per-site stealth-browser sessions (Playwright storageState: cookies +
+  // localStorage) live here as `<host>.json`, so a gated/logged-in site stays
+  // signed in across runs without re-solving CF / re-logging-in each time.
+  profilesDir: path.resolve(process.env.PROFILES_DIR || './profiles'),
   nodePath: process.env.NODE_PATH || 'F:\\Apps\\NodeJS',
 
   // Download guards. maxFilesizeMB=0 means unlimited; minFreeSpaceMB is the

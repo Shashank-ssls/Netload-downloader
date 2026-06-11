@@ -145,7 +145,7 @@ export class MseCapturer {
     let capped = false;
 
     try {
-      context = await BrowserManager.newContext();
+      context = await BrowserManager.newContext({ url: pageUrl });
       page = await context.newPage();
 
       // Node-side sink: each appended fragment is written, in arrival order, to

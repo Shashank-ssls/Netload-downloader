@@ -23,6 +23,7 @@ import { HeaderBuilder } from '../utils/headers';
 import { BrowserManager } from '../utils/browserManager';
 import { BrowserHelpers } from '../utils/browserHelpers';
 import { CookieHarvester } from '../utils/cookieHarvester';
+import { BrowserProfiles } from '../utils/browserProfiles';
 import type { CapturedStream, StreamMagnitude } from '../types';
 import type { Page, Response as PlaywrightResponse } from 'playwright-core';
 import { classifyContentType, classifyBytes, type MediaKind } from './mediaSignature';
@@ -441,7 +442,7 @@ export class FallbackExtractor {
 
     try {
       logger.info({ url }, 'Tier 2: Starting network interception...');
-      context = await BrowserManager.newContext();
+      context = await BrowserManager.newContext({ url });
       page = await context.newPage();
 
       // Collect every stream candidate the player requests, then pick the best.
@@ -530,6 +531,9 @@ export class FallbackExtractor {
       // Reuse the stealth browser's session cookies (CF clearance / login) for
       // later yt-dlp calls — only if this host has no cookie file yet.
       await CookieHarvester.harvest(context, url).catch(() => {});
+      // Persist the full session (cookies + localStorage) so this site stays
+      // signed-in / cleared on the next run (A4).
+      await BrowserProfiles.save(context, url).catch(() => {});
 
       // Structural player-frame detection (#6): an unknown embedder we followed
       // may expose a <video> or a known player global without a network stream we

@@ -222,7 +222,7 @@ export class SegmentStitcher {
     let page: Page | null = null;
 
     try {
-      context = await BrowserManager.newContext();
+      context = await BrowserManager.newContext({ url: pageUrl });
       page = await context.newPage();
 
       await page.addInitScript(() => {
@@ -434,7 +434,7 @@ export class SegmentStitcher {
     let page: Page | null = null;
 
     try {
-      context = await BrowserManager.newContext();
+      context = await BrowserManager.newContext({ url: pageUrl });
       page = await context.newPage();
 
       const seen = new Set<string>();

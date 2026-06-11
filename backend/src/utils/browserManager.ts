@@ -12,6 +12,7 @@ import path from 'path';
 import logger from '../logger';
 import { config } from '../config';
 import { Semaphore } from './semaphore';
+import { BrowserProfiles } from './browserProfiles';
 
 // CRITICAL: Resolve and force-set browser path before any playwright import
 const browsersPath = process.env.PLAYWRIGHT_BROWSERS_PATH
@@ -84,12 +85,18 @@ export class BrowserManager {
    * concurrency permit is free. ALWAYS call context.close() when done — the permit
    * is released automatically on the context's 'close' event, so a queued caller
    * can proceed. If the limit is reached, this awaits until a context closes.
+   *
+   * Pass `{ url }` to seed the context from a saved per-site session profile (A4),
+   * so a gated/logged-in site stays signed-in across runs.
    */
-  static async newContext(): Promise<BrowserContext> {
+  static async newContext(opts?: { url?: string }): Promise<BrowserContext> {
     await this.contextLimiter.acquire();
     if (this.contextLimiter.waiting > 0) {
       logger.info(this.stats(), 'Browser context limit reached — callers queued');
     }
+
+    // Reuse a saved session for this host, if one exists.
+    const storageState = opts?.url ? BrowserProfiles.storageStateOption(opts.url) : undefined;
 
     let context: BrowserContext;
     try {
@@ -100,6 +107,7 @@ export class BrowserManager {
         locale: 'en-US',
         timezoneId: 'America/New_York',
         colorScheme: 'light',
+        ...(storageState ? { storageState } : {}),
         extraHTTPHeaders: {
           'Accept-Language': 'en-US,en;q=0.9',
           'Accept-Encoding': 'gzip, deflate, br',
