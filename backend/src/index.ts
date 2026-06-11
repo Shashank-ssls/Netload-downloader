@@ -18,7 +18,7 @@ import { YTDLPProcessManager } from './yt-dlp';
 import { BrowserManager } from './utils/browserManager';
 import { PlaylistExpander } from './extractors/playlistExpander';
 import { Diagnostics } from './extractors/diagnostics';
-import { getBinaryVersions, updateYtdlp } from './utils/binaryVersions';
+import { getBinaryVersions, safeUpdateYtdlp } from './utils/binaryVersions';
 import { YtdlpUpdater } from './utils/ytdlpUpdater';
 import { SsrfGuard } from './utils/ssrfGuard';
 import { apiTokenMiddleware, rateLimiter } from './middleware/security';
@@ -64,10 +64,11 @@ app.get('/api/health', (_req, res) => {
 });
 
 // Update yt-dlp (built-in self-update)
-app.post('/api/update/ytdlp', (req, res) => {
+app.post('/api/update/ytdlp', async (req, res) => {
   // Body channel overrides the configured one (stable | nightly | master).
   const channel = typeof req.body?.channel === 'string' ? req.body.channel : config.ytdlpChannel;
-  const result = updateYtdlp(channel);
+  // Safe update: backs up, smoke-tests, and auto-rolls-back a broken build.
+  const result = await safeUpdateYtdlp(channel);
   res.status(result.ok ? 200 : 500).json(result);
 });
 

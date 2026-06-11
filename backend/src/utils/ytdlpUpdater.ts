@@ -16,7 +16,7 @@ import fs from 'fs';
 import path from 'path';
 import { config } from '../config';
 import logger from '../logger';
-import { updateYtdlpAsync } from './binaryVersions';
+import { safeUpdateYtdlp } from './binaryVersions';
 
 // Marker recording when we last successfully updated, kept next to the binary.
 const MARKER_PATH = path.join(path.dirname(config.ytdlpPath), '.ytdlp-last-update.json');
@@ -54,8 +54,14 @@ export class YtdlpUpdater {
 
   private static async runOnce(trigger: string): Promise<void> {
     logger.info({ trigger, channel: config.ytdlpChannel }, 'Running yt-dlp auto-update');
-    const result = await updateYtdlpAsync(config.ytdlpChannel);
+    // Safe update: backs up, smoke-tests, and auto-rolls-back a bad build.
+    const result = await safeUpdateYtdlp(config.ytdlpChannel);
     if (result.ok) {
+      this.markUpdated();
+    } else if (result.rolledBack) {
+      // A bad build was rolled back — mark updated so we don't immediately retry
+      // the same broken channel build every startup; the weekly tick will retry.
+      logger.warn({ output: result.output }, 'yt-dlp update rolled back to last known good');
       this.markUpdated();
     } else {
       // A binary installed via pip/system package can't self-update; that's fine.

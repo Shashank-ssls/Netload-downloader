@@ -42,6 +42,9 @@ export const config = {
   ytdlpChannel: process.env.YTDLP_CHANNEL || 'stable',
   ytdlpUpdateIntervalMs:
     Math.max(1, parseInt(process.env.YTDLP_UPDATE_INTERVAL_DAYS || '7', 10)) * 24 * 60 * 60 * 1000,
+  // Optional URL for a post-update functional smoke (metadata-only `-J`). Empty =
+  // skip; the version + extractor-load checks always run regardless.
+  ytdlpSmokeUrl: process.env.YTDLP_SMOKE_URL || '',
 
   // Security / limits. apiToken empty = auth disabled (localhost-only already).
   apiToken: process.env.API_TOKEN || '',
