@@ -22,6 +22,7 @@ import logger from '../logger';
 import { HeaderBuilder } from '../utils/headers';
 import { BrowserManager } from '../utils/browserManager';
 import { BrowserHelpers } from '../utils/browserHelpers';
+import { CookieHarvester } from '../utils/cookieHarvester';
 import type { CapturedStream, StreamMagnitude } from '../types';
 import type { Page, Response as PlaywrightResponse } from 'playwright-core';
 import { classifyContentType, classifyBytes, type MediaKind } from './mediaSignature';
@@ -282,7 +283,9 @@ export class FallbackExtractor {
     return found ? total : undefined;
   }
 
-  private static pickBestVariant(masterText: string, masterUrl: string): string | undefined {
+  // `static` (not private) so the segment stitcher can reuse it to follow a
+  // master playlist intercepted in-page (roadmap smaller-items: master follow).
+  static pickBestVariant(masterText: string, masterUrl: string): string | undefined {
     const lines = masterText.split('\n').map(l => l.trim());
     let best = { bw: -1, uri: '' };
     for (let i = 0; i < lines.length; i++) {
@@ -523,6 +526,10 @@ export class FallbackExtractor {
       const captured = await capturePromise;
       stop.value = true;
       await driver;
+
+      // Reuse the stealth browser's session cookies (CF clearance / login) for
+      // later yt-dlp calls — only if this host has no cookie file yet.
+      await CookieHarvester.harvest(context, url).catch(() => {});
 
       // Structural player-frame detection (#6): an unknown embedder we followed
       // may expose a <video> or a known player global without a network stream we

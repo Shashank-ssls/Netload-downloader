@@ -102,6 +102,30 @@ export class CloudflareRecoveryManager {
     ];
   }
 
+  // Distinct browser fingerprints to rotate through when a site keeps blocking
+  // us. yt-dlp/curl_cffi reliably support these --impersonate targets.
+  static readonly IMPERSONATE_ROTATION = ['chrome', 'safari', 'edge'];
+
+  /**
+   * Pick the `--impersonate` target for an attempt. The provider's default is used
+   * on the first try; on subsequent tries (persistent 403/blocks) we rotate through
+   * distinct browser fingerprints, since a CDN may fingerprint-block one client.
+   * Pure, so it's unit-tested directly.
+   */
+  static cycleImpersonateTarget(attempt: number, providerDefault: string | null): string | null {
+    if (attempt <= 1) return providerDefault;
+    return this.IMPERSONATE_ROTATION[(attempt - 2) % this.IMPERSONATE_ROTATION.length];
+  }
+
+  /**
+   * Force yt-dlp's generic extractor (with impersonation) — a cheap retry for a
+   * non-generic provider whose dedicated extractor went stale, tried BEFORE
+   * spinning up the headless browser. The captured player headers still apply.
+   */
+  static genericExtractorArgs(): string[] {
+    return ['--force-generic-extractor', '--extractor-args', 'generic:impersonate'];
+  }
+
   static async waitCooldown(attempt: number): Promise<void> {
     const delay = this.BASE_COOLDOWN_MS * Math.pow(2, attempt - 1);
     const jitter = Math.floor(Math.random() * 1000);

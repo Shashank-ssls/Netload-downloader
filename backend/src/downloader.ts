@@ -60,6 +60,11 @@ export async function downloadMedia(taskId: string, onProgress: (data: ProgressD
   let segmentedDetected = false;
   // Set once we attempt an MSE/appendBuffer capture, for the same reason.
   let mseDetected = false;
+  // yt-dlp generic-extractor fallback: a cheap retry (with the player's headers)
+  // before the headless browser, for a non-generic provider whose dedicated
+  // extractor failed. `triedGeneric` ensures it runs at most once.
+  let forceGeneric = false;
+  let triedGeneric = false;
 
   // Fail fast if the storage drive is nearly full (before pulling a large file).
   const freeMB = FileValidator.getFreeSpaceMB(config.storagePath);
@@ -119,8 +124,13 @@ export async function downloadMedia(taskId: string, onProgress: (data: ProgressD
     // Provider-specific args
     args.push(...provider.getSpecificArgs(targetUrl));
 
-    // Impersonation
-    const impersonate = provider.getImpersonateTarget();
+    // Generic-extractor retry (before the browser) for a stale dedicated extractor.
+    if (forceGeneric && !isFallbackStream) {
+      args.push(...CloudflareRecoveryManager.genericExtractorArgs());
+    }
+
+    // Impersonation — rotate the fingerprint on retries (persistent blocks).
+    const impersonate = CloudflareRecoveryManager.cycleImpersonateTarget(attempt, provider.getImpersonateTarget());
     if (impersonate) args.push('--impersonate', impersonate);
 
     // HLS mode for direct streams
@@ -229,10 +239,22 @@ export async function downloadMedia(taskId: string, onProgress: (data: ProgressD
           }
         }
 
+        // Cheap generic-extractor retry BEFORE the headless browser: a non-generic
+        // provider's dedicated extractor may have gone stale while yt-dlp's generic
+        // path (with the player's headers + impersonation) still resolves it.
+        if (!triedGeneric && provider.name !== 'generic' && !isFallbackStream && candidates.length === 0) {
+          triedGeneric = true;
+          forceGeneric = true;
+          logger.info({ taskId }, 'Trying yt-dlp generic extractor before browser fallback');
+          await CloudflareRecoveryManager.waitCooldown(attempt);
+          continue;
+        }
+
         // Tier 1 + Tier 2 fallback — always from original URL. Fetched once and
         // ranked by size; we advance to the next source each time one fails to
         // download (a download error, not a small file).
         if (candidates.length === 0) {
+          forceGeneric = false; // browser fallback owns the flow now; don't leak the flag
           candidates = await FallbackExtractor.extractRankedCandidates(task.url, provider.name);
 
           // Segmented stream: the site serves many short sibling chunks and no

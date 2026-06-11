@@ -30,6 +30,7 @@ import { config } from '../config';
 import { BrowserManager } from '../utils/browserManager';
 import { BrowserHelpers } from '../utils/browserHelpers';
 import { FileValidator } from '../utils/validators';
+import { FallbackExtractor } from './fallbackExtractor';
 import type { ProgressData, CapturedStream } from '../types';
 import type { Page } from 'playwright-core';
 
@@ -281,13 +282,33 @@ export class SegmentStitcher {
 
       // Poll for a captured playlist that yields enough segments.
       const deadline = Date.now() + PLAYLIST_WAIT_MS;
-      let best: { segments: string[]; durationSec: number; text: string } | null = null;
+      let best: { segments: string[]; durationSec: number; text: string; base: string } | null = null;
+      const fetchedVariants = new Set<string>();
       while (Date.now() < deadline) {
         const caps: string[] = await page.evaluate(() => (window as any).__caps || []).catch(() => []);
         for (const text of caps) {
-          const parsed = this.parsePlaylist(text, prefix);
+          let parsed = this.parsePlaylist(text, prefix);
+          let parsedText = text;
+          let base = prefix;
+
+          // Master playlist (variants only, no #EXTINF) — follow its highest-
+          // bandwidth variant to the real media playlist. Relative variant URIs
+          // resolve against the segment-dir prefix (the best base we have in-page).
+          if (!parsed && /#EXT-X-STREAM-INF/i.test(text)) {
+            const variantUrl = FallbackExtractor.pickBestVariant(text, prefix);
+            if (variantUrl && !fetchedVariants.has(variantUrl)) {
+              fetchedVariants.add(variantUrl);
+              const mediaText = await this.fetchText(variantUrl, headers, userAgent);
+              const mediaParsed = mediaText ? this.parsePlaylist(mediaText, variantUrl) : null;
+              if (mediaParsed && mediaText) {
+                parsed = mediaParsed; parsedText = mediaText; base = variantUrl;
+                logger.info({ variantUrl, segments: mediaParsed.segments.length }, 'Followed master playlist to best variant');
+              }
+            }
+          }
+
           if (parsed && (!best || parsed.segments.length > best.segments.length)) {
-            best = { ...parsed, text };
+            best = { ...parsed, text: parsedText, base };
           }
         }
         if (best && best.segments.length >= SEGMENT_RUN_MIN) break;
@@ -302,7 +323,7 @@ export class SegmentStitcher {
         userAgent,
         durationSec: best.durationSec,
         coverageSec: best.durationSec,
-        playlistText: this.normalizePlaylist(best.text, prefix),
+        playlistText: this.normalizePlaylist(best.text, best.base),
       };
 
     } catch (err: any) {
@@ -335,6 +356,22 @@ export class SegmentStitcher {
       }
     }
     return segments.length ? { segments, durationSec } : null;
+  }
+
+  /** Fetch a text resource (e.g. a media playlist) replaying the player's headers. */
+  private static async fetchText(url: string, headers: Record<string, string>, userAgent: string): Promise<string | null> {
+    try {
+      const r = await axios.get(url, {
+        headers: { ...headers, 'User-Agent': userAgent },
+        timeout: SEGMENT_FETCH_TIMEOUT_MS,
+        responseType: 'text',
+        validateStatus: () => true,
+        transformResponse: (d) => d,
+      });
+      return r.status < 400 && typeof r.data === 'string' ? r.data : null;
+    } catch {
+      return null;
+    }
   }
 
   static resolveSegUrl(uri: string, baseHint: string): string | null {
